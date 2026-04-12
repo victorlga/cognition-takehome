@@ -2,6 +2,9 @@
 
 An event-driven system that uses the [Devin API](https://docs.devin.ai/api-reference/overview) to automatically plan, implement, review, and land fixes for security vulnerabilities in a fork of [Apache Superset](https://github.com/apache/superset).
 
+![UI](docs/image.png)
+
+
 ---
 
 ## Table of Contents
