@@ -73,7 +73,14 @@ class TestMetrics:
         metrics = await db.get_metrics()
         assert metrics["total_issues"] == 0
         assert metrics["active_sessions"] == 0
-        assert metrics["issues_by_status"] == {}
+        # All statuses should be present with 0 counts
+        assert metrics["issues"]["backlog"] == 0
+        assert metrics["issues"]["done"] == 0
+        # Velocity metrics should be None/0 with no data
+        assert metrics["median_time_to_remediation_hours"] is None
+        assert metrics["session_success_rate"] == 0.0
+        assert metrics["error_rate"] == 0.0
+        assert metrics["recent_activity"] == []
 
     async def test_metrics_with_data(self):
         await db.upsert_issue(1, issue_node_id="I_1", status="backlog")
@@ -84,7 +91,17 @@ class TestMetrics:
 
         metrics = await db.get_metrics()
         assert metrics["total_issues"] == 3
-        assert metrics["issues_by_status"]["backlog"] == 1
-        assert metrics["issues_by_status"]["planning"] == 2
+        assert metrics["issues"]["backlog"] == 1
+        assert metrics["issues"]["planning"] == 2
         assert metrics["active_sessions"] == 1
         assert len(metrics["recent_activity"]) == 2
+        # Velocity metrics
+        assert metrics["total_sessions"] == 2
+        assert metrics["completed_sessions"] == 1
+        assert metrics["failed_sessions"] == 0
+        assert metrics["session_success_rate"] == 0.5
+        assert metrics["error_rate"] == 0.0
+        # Risk posture
+        assert "severity_breakdown" in metrics
+        assert "open_trend" in metrics
+        assert "closed_trend" in metrics
