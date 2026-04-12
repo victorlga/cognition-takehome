@@ -12,8 +12,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATUSES = frozenset({"stopped", "failed", "finished"})
-SETTLED_DETAIL = frozenset({"finished", "waiting_for_user", "waiting_for_approval"})
+# Devin API v3 status enum: new | creating | claimed | running | exit | error | suspended | resuming
+# Terminal statuses indicate the session is no longer active.
+TERMINAL_STATUSES = frozenset({"exit", "error", "suspended"})
+
+# status_detail values that indicate successful task completion.
+# For an automated orchestrator, only "finished" counts as settled —
+# "waiting_for_user" and "waiting_for_approval" mean the session is stuck.
+SETTLED_DETAIL = frozenset({"finished"})
 
 
 class DevinClient:
@@ -34,8 +40,10 @@ class DevinClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            # v3 endpoints require org_id in the URL path:
+            # /v3/organizations/{org_id}/sessions, etc.
             self._client = httpx.AsyncClient(
-                base_url=self.base_url,
+                base_url=f"{self.base_url}/organizations/{self.org_id}",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -55,10 +63,12 @@ class DevinClient:
         prompt: str,
         playbook_id: str | None = None,
         tags: list[str] | None = None,
+        repos: list[str] | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         """Create a new Devin session.
 
-        POST /v3/sessions
+        POST /v3/organizations/{org_id}/sessions
         """
         client = await self._get_client()
         body: dict[str, Any] = {"prompt": prompt}
@@ -66,20 +76,24 @@ class DevinClient:
             body["playbook_id"] = playbook_id
         if tags:
             body["tags"] = tags
+        if repos:
+            body["repos"] = repos
+        if title:
+            body["title"] = title
 
         resp = await client.post("/sessions", json=body)
         resp.raise_for_status()
         return resp.json()
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
-        """GET /v3/sessions/{session_id}"""
+        """GET /v3/organizations/{org_id}/sessions/{session_id}"""
         client = await self._get_client()
         resp = await client.get(f"/sessions/{session_id}")
         resp.raise_for_status()
         return resp.json()
 
     async def send_message(self, session_id: str, message: str) -> dict[str, Any]:
-        """POST /v3/sessions/{session_id}/messages"""
+        """POST /v3/organizations/{org_id}/sessions/{session_id}/messages"""
         client = await self._get_client()
         resp = await client.post(
             f"/sessions/{session_id}/messages",
@@ -89,7 +103,7 @@ class DevinClient:
         return resp.json()
 
     async def get_messages(self, session_id: str) -> list[dict[str, Any]]:
-        """GET /v3/sessions/{session_id}/messages"""
+        """GET /v3/organizations/{org_id}/sessions/{session_id}/messages"""
         client = await self._get_client()
         resp = await client.get(f"/sessions/{session_id}/messages")
         resp.raise_for_status()

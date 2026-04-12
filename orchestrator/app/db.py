@@ -183,6 +183,23 @@ async def update_session_log(
         await db.commit()
 
 
+async def list_active_sessions() -> list[dict[str, Any]]:
+    """Return all session_log rows where status = 'running'.
+
+    Used by the session tracker to know which Devin sessions to poll.
+    """
+    async with _connect() as conn:
+        cursor = await conn.execute(
+            "SELECT sl.*, ist.status AS issue_status "
+            "FROM session_log sl "
+            "JOIN issue_state ist ON sl.issue_id = ist.issue_id "
+            "WHERE sl.status = 'running' "
+            "ORDER BY sl.id"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def list_session_logs(issue_id: int | None = None) -> list[dict[str, Any]]:
     async with _connect() as db:
         if issue_id is not None:

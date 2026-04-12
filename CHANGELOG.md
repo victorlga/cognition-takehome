@@ -398,3 +398,46 @@ The 4 picks tell a varied security story:
 - Dashboard data is computed from SQLite on each page load (demo-scale) — would need a metrics pipeline for production
 - Chart.js and htmx loaded from CDN — requires internet access; could bundle for air-gapped deployments
 - The seed script is a dev helper and not committed to the main codebase (in `scripts/` directory)
+
+---
+
+## [SESSION_MGMT] — 2026-04-12 — Fix Devin API v3 bugs and add session lifecycle tracking
+
+**What changed:**
+- **Bug fix: Wrong URL pattern** — `DevinClient._get_client()` now builds `base_url` as `/v3/organizations/{org_id}/...` instead of just `/v3/...`. All API calls would have 404'd in production.
+- **Bug fix: Wrong terminal statuses** — `TERMINAL_STATUSES` updated from `{stopped, failed, finished}` (none of which are real v3 statuses) to `{exit, error, suspended}` (the actual v3 enum). `poll_until_complete()` would have looped forever.
+- **Bug fix: Overly broad SETTLED_DETAIL** — Removed `waiting_for_user` and `waiting_for_approval` from `SETTLED_DETAIL`. For an automated orchestrator these mean "stuck", not "done". Only `finished` is now treated as settled.
+- **Improvement: `repos` and `title` params** — `create_session()` now accepts `repos` and `title`. State machine passes the target repo and a human-readable title to every session.
+- **Improvement: Session tracker** — New `session_tracker.py` background loop polls active Devin sessions via the API, updates `session_log` with final status/duration, extracts PR URLs from builder sessions into `issue_state.pr_url`, and propagates errors.
+- **DB: `list_active_sessions()`** — New query joins `session_log` and `issue_state` to find all running sessions for the tracker.
+- **Wiring: `main.py`** — Session tracker runs alongside the poller in the FastAPI lifespan. Both are cancelled cleanly on shutdown.
+- **Tests: 83 tests pass** — Updated `test_devin_client.py` (correct URLs, statuses, new params). Added `test_session_tracker.py` (18 new tests covering completion, PR extraction, error propagation, API failures, multi-session).
+- **Docs: ARCHITECTURE.md** — Updated system diagram (added Session Tracker node), tech stack (correct v3 URL pattern), and directory structure.
+
+**Files touched:**
+- `orchestrator/app/devin_client.py` (modified — URL fix, status fix, new params)
+- `orchestrator/app/state_machine.py` (modified — repos/title at call sites)
+- `orchestrator/app/db.py` (modified — added `list_active_sessions()`)
+- `orchestrator/app/session_tracker.py` (new)
+- `orchestrator/app/main.py` (modified — wire tracker into lifespan)
+- `orchestrator/tests/test_devin_client.py` (modified — updated URLs, statuses, new test)
+- `orchestrator/tests/test_session_tracker.py` (new — 18 tests)
+- `docs/ARCHITECTURE.md` (modified — diagram, tech stack, directory structure)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All 83 tests pass: `python -m pytest orchestrator/tests/ -v` (0 failures)
+- Verified against official Devin API v3 docs: status enum, URL patterns, SessionResponse schema
+- Session tracker tested with mocked Devin API for all edge cases (completion, errors, API failures, PR extraction)
+
+**What the next phase needs to know:**
+- The Devin API client now uses the correct v3 URL pattern (`/v3/organizations/{org_id}/sessions`)
+- Sessions are tracked to completion by the background session tracker loop
+- Builder sessions that produce PRs will have their PR URL stored on `issue_state.pr_url` automatically
+- Session failures are propagated to `issue_state.error_message`
+- The `session_log` table now gets populated with real `finished_at`, `duration_seconds`, and final `status` values
+
+**Open questions / known gaps:**
+- ACU consumption tracking (`acus_consumed` from the API) is not yet implemented — could feed into cost-per-fix metrics
+- The session tracker does not yet auto-advance issues to the next pipeline stage (e.g., planning → building when planner finishes). This would require the tracker to also apply label changes on GitHub.
+- `structured_output_schema` support not yet used — could enable structured plan extraction from planner sessions

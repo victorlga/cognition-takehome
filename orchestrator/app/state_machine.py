@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from app import db
+from app.config import settings
 from app.db import now_utc
 from app.devin_client import DevinClient
 from app.prompts import IssueContext, build_builder_prompt, build_planner_prompt, build_reviewer_prompt
@@ -104,6 +105,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "planner"],
+                repos=[settings.github_repo],
+                title=f"[Planner] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["planner_session"] = session_id
@@ -127,6 +130,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "builder"],
+                repos=[settings.github_repo],
+                title=f"[Builder] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["builder_session"] = session_id
@@ -149,6 +154,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "reviewer"],
+                repos=[settings.github_repo],
+                title=f"[Reviewer] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["reviewer_session"] = session_id

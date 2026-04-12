@@ -24,6 +24,7 @@ flowchart TB
         Poller["Poller\n(background task)"]
         SM["State Machine\n(per-issue)"]
         DevinClient["Devin API Client"]
+        Tracker["Session Tracker\n(background task)"]
         DB["SQLite DB\n(state + metrics)"]
         Scheduler["Periodic Scanner\n(scheduled Devin)"]
         Dashboard["Observability Dashboard\n/dashboard"]
@@ -53,6 +54,11 @@ flowchart TB
 
     PRs -- "Reviewing → Done\n(human merge)" --> Project
 
+    %% Session tracking (polls Devin API for active sessions)
+    Tracker -- "poll active sessions" --> DevinClient
+    DevinClient -- "GET /sessions/{id}" --> DevinCloud
+    Tracker -- "update status,\nextract PR URLs,\npropagate errors" --> DB
+
     %% Periodic scan
     Scheduler -- "cron: daily" --> ScannerSession
     ScannerSession -- "files new issues" --> Issues
@@ -73,7 +79,7 @@ flowchart TB
 | **Persistence** | SQLite (via `aiosqlite`) | Zero-ops, single-file, sufficient for demo-scale state. Easily inspectable for the Loom walkthrough. |
 | **Containerization** | Docker Compose | Single `docker compose up` to run the orchestrator and dashboard. Zero additional configuration needed beyond env vars. Required by the take-home spec. |
 | **Polling** | Background `asyncio` task | Polls the GitHub API every N seconds for `state:*` label changes. Eliminates the need for a publicly-reachable webhook endpoint — `docker compose up` just works. |
-| **Devin API** | v3 REST (`https://api.devin.ai/v3/`) | Latest API with RBAC, session attribution, playbook attachment, and structured polling. |
+| **Devin API** | v3 REST (`https://api.devin.ai/v3/organizations/{org_id}/`) | Latest API with RBAC, session attribution, playbook attachment, and structured polling. Endpoints include org_id in the URL path. |
 | **Dashboard** | FastAPI + Jinja2 + htmx | Minimal single-page dashboard served by the same FastAPI process. No separate frontend build step. Answers "how would an engineering leader know this is working?" |
 | **Scanning** | `pip-audit`, `bandit`, `semgrep`, `npm audit` | Industry-standard tools. Results feed into issue creation. |
 | **GitHub CLI** | `gh` | Issue/project/PR management from Devin sessions and orchestrator scripts. |
@@ -287,18 +293,19 @@ cognition-takehome/
 │   ├── Dockerfile
 │   ├── pyproject.toml
 │   ├── app/
-│   │   ├── main.py          # FastAPI app entry
-│   │   ├── config.py        # Settings / env vars
-│   │   ├── poller.py        # Polling-based state machine driver (primary trigger)
-│   │   ├── devin_client.py  # Devin API v3 wrapper
-│   │   ├── github_client.py # GitHub API helper
-│   │   ├── state_machine.py # Issue state transitions
-│   │   ├── prompts.py       # Devin session prompt templates
-│   │   ├── scanner.py       # Periodic vuln scan logic
-│   │   ├── db.py            # SQLite models + queries
-│   │   └── dashboard.py     # Dashboard routes + metrics
+│   │   ├── main.py             # FastAPI app entry
+│   │   ├── config.py           # Settings / env vars
+│   │   ├── poller.py           # Polling-based state machine driver (primary trigger)
+│   │   ├── session_tracker.py  # Background loop: polls active Devin sessions to completion
+│   │   ├── devin_client.py     # Devin API v3 wrapper
+│   │   ├── github_client.py    # GitHub API helper
+│   │   ├── state_machine.py    # Issue state transitions
+│   │   ├── prompts.py          # Devin session prompt templates
+│   │   ├── scanner.py          # Periodic vuln scan logic
+│   │   ├── db.py               # SQLite models + queries
+│   │   └── dashboard.py        # Dashboard routes + metrics
 │   └── templates/
-│       └── dashboard.html   # Jinja2 + htmx dashboard
+│       └── dashboard.html      # Jinja2 + htmx dashboard
 ├── docker-compose.yml
 ├── CHANGELOG.md
 ├── README.md
