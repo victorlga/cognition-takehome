@@ -187,7 +187,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 # Create webhook (URL will be updated in Phase 2)
 gh api repos/victorlga/superset/hooks -f name=web \
-  -f 'config[url]=https://placeholder.ngrok.io/webhooks/github' \
+  -f 'config[url]=https://placeholder.localhost.run/webhooks/github' \
   -f 'config[content_type]=json' \
   -f 'config[secret]=<generated-secret>' \
   -f 'events[]=projects_v2_item'

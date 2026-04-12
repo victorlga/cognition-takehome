@@ -67,4 +67,4 @@
 - Devin API key (`DEVIN_API_KEY`) and org ID (`DEVIN_ORG_ID`) must be provisioned as secrets before Phase 2 can test session creation
 - GitHub webhook secret needs to be generated and configured on the fork before Phase 2 can receive webhooks
 - The exact GitHub Projects v2 field node IDs for the Status field on the fork's project board will only be known after Phase 1 creates the board
-- ngrok or equivalent tunnel needed for local webhook testing during Phase 2
+- localhost.run SSH tunnel (zero-signup) for local webhook testing during Phase 2: `ssh -R 80:localhost:8000 nokey@localhost.run`

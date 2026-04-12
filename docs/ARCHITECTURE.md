@@ -72,7 +72,7 @@ flowchart TB
 | **Orchestrator** | Python 3.12 + FastAPI | Fastest path to a working webhook receiver + API client. Python is Superset's own language, so the reviewer audience is familiar. `httpx` for async Devin API calls. |
 | **Persistence** | SQLite (via `aiosqlite`) | Zero-ops, single-file, sufficient for demo-scale state. Easily inspectable for the Loom walkthrough. |
 | **Containerization** | Docker Compose | Single `docker compose up` to run the orchestrator, expose the webhook endpoint, and (optionally) the dashboard. Required by the take-home spec. |
-| **Webhook Tunnel** | ngrok (dev) / any public host (prod) | GitHub webhooks need a public URL. ngrok for local dev; in the demo the orchestrator runs on a cloud VM or Fly.io. |
+| **Webhook Tunnel** | [localhost.run](https://localhost.run) (dev) | GitHub webhooks need a public URL. Zero-signup SSH tunnel: `ssh -R 80:localhost:8000 nokey@localhost.run`. No account or token required. |
 | **Devin API** | v3 REST (`https://api.devin.ai/v3/`) | Latest API with RBAC, session attribution, playbook attachment, and structured polling. |
 | **Dashboard** | FastAPI + Jinja2 + htmx | Minimal single-page dashboard served by the same FastAPI process. No separate frontend build step. Answers "how would an engineering leader know this is working?" |
 | **Scanning** | `pip-audit`, `bandit`, `semgrep`, `npm audit` | Industry-standard tools. Results feed into issue creation. |
@@ -291,7 +291,7 @@ All secrets are provided via environment variables. **Never hardcode.**
 | `DEVIN_ORG_ID` | Devin organization ID | Shown on the service user page or in any Devin API response | Orchestrator → Devin API |
 | `GITHUB_TOKEN` | GitHub PAT with `repo`, `project`, `admin:org` scopes | GitHub → Settings → Developer Settings → PAT (fine-grained) | Orchestrator → GitHub API, `gh` CLI |
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for webhook signature verification | Self-generated: `openssl rand -hex 20` | Orchestrator webhook endpoint |
-| `NGROK_AUTH_TOKEN` | (dev only) ngrok tunnel authentication | [dashboard.ngrok.com](https://dashboard.ngrok.com/get-started/your-authtoken) | Local development |
+| *(tunnel)* | localhost.run — no token needed | `ssh -R 80:localhost:8000 nokey@localhost.run` | Local development |
 
 > **Note:** The legacy "API Keys" page on Devin is deprecated. Use **Service Users** instead. A service user named `takehome` with Admin access has already been created for this project.
 
