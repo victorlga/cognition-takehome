@@ -68,3 +68,68 @@
 - GitHub webhook secret needs to be generated and configured on the fork before Phase 2 can receive webhooks
 - The exact GitHub Projects v2 field node IDs for the Status field on the fork's project board will only be known after Phase 1 creates the board
 - localhost.run SSH tunnel (zero-signup) for local webhook testing during Phase 2: `ssh -R 80:localhost:8000 nokey@localhost.run`
+
+---
+
+## [PHASE_2] — 2026-04-12 — Orchestrator backend with webhook receiver and Devin API client
+
+**What changed:**
+- Built FastAPI orchestrator in `orchestrator/` directory
+- Implemented webhook receiver (`POST /webhooks/github`) with HMAC-SHA256 verification
+- Implemented Devin API v3 client (session creation, polling, messaging)
+- Implemented GitHub API client (issue resolution via GraphQL, comments, labels)
+- Implemented state machine with SQLite persistence (backlog → planning → building → reviewing → done)
+- Created prompt templates for planner/builder/reviewer Devin sessions
+- Created Docker Compose configuration for single-command startup
+- Added health check (`GET /health`) and metrics stub (`GET /api/metrics`)
+- Added dashboard stub (`GET /dashboard`) — full implementation in Phase 4
+- Added scanner stub (`scanner.py`) — full implementation in Phase 3
+- Added 53 unit tests covering webhook, state machine, Devin client, prompts, and DB layer
+- Updated `.gitignore` for Python/Docker artifacts
+
+**Files touched:**
+- `orchestrator/` (new directory, all files)
+  - `orchestrator/pyproject.toml` (new)
+  - `orchestrator/Dockerfile` (new)
+  - `orchestrator/app/__init__.py` (new)
+  - `orchestrator/app/main.py` (new)
+  - `orchestrator/app/config.py` (new)
+  - `orchestrator/app/webhook.py` (new)
+  - `orchestrator/app/devin_client.py` (new)
+  - `orchestrator/app/github_client.py` (new)
+  - `orchestrator/app/state_machine.py` (new)
+  - `orchestrator/app/prompts.py` (new)
+  - `orchestrator/app/scanner.py` (new)
+  - `orchestrator/app/db.py` (new)
+  - `orchestrator/app/dashboard.py` (new)
+  - `orchestrator/templates/dashboard.html` (new)
+  - `orchestrator/tests/` (new, 6 test files)
+- `docker-compose.yml` (new)
+- `.gitignore` (new)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All 53 unit tests pass: `python -m pytest orchestrator/tests/ -v`
+- Webhook rejects invalid HMAC signatures (returns 401)
+- Webhook accepts valid payloads and routes by event type
+- State machine validates transitions (rejects skips, allows error from any state)
+- Devin client correctly creates sessions, polls status, handles timeouts
+- Prompt templates render with all expected fields
+- DB layer handles upsert, session logging, and aggregate metrics
+
+**What the next phase needs to know:**
+- Orchestrator runs on port 8000 via `docker compose up --build`
+- Webhook endpoint: `POST /webhooks/github` (expects `projects_v2_item` events)
+- Dashboard endpoint: `GET /dashboard` (stub — full htmx dashboard in Phase 4)
+- Metrics API: `GET /api/metrics` (returns JSON with issue counts, session counts, activity feed)
+- Health check: `GET /health` (returns `{"status": "ok"}`)
+- Database file: `data/orchestrator.db` (mounted via Docker volume)
+- Environment variables required: `DEVIN_API_KEY`, `DEVIN_ORG_ID`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`
+- State machine supports transitions: backlog → planning → building → reviewing → done (plus error from any state)
+- Devin sessions are created with tags `[issue-{N}, {role}]` for filtering
+
+**Open questions / known gaps:**
+- Docker Compose build not yet tested end-to-end (will verify before PR merge)
+- Real Devin API session creation not tested (mocked in unit tests) — requires API key in environment
+- Webhook payload parsing assumes `changes.field_value.to.name` contains the new status column name — needs validation against real GitHub Projects v2 payloads once Phase 1 creates the board
+- Scanner module is a stub — full implementation deferred to Phase 3
