@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import init_db
 from app.poller import start_polling_loop
+from app.session_tracker import start_session_tracker_loop
 from app.dashboard import router as dashboard_router
 
 logging.basicConfig(
@@ -30,21 +31,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Database ready.")
 
     poll_task: asyncio.Task[None] | None = None
+    tracker_task: asyncio.Task[None] | None = None
     if settings.polling_enabled:
         logger.info("Starting background poller (interval=%ds) …", settings.poll_interval_seconds)
         poll_task = asyncio.create_task(start_polling_loop())
+        logger.info("Starting session tracker …")
+        tracker_task = asyncio.create_task(start_session_tracker_loop())
     else:
         logger.info("Polling disabled — webhook-only mode.")
 
     yield
 
-    if poll_task is not None and not poll_task.done():
-        poll_task.cancel()
-        try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Poller stopped.")
+    for task, name in [(poll_task, "Poller"), (tracker_task, "Session tracker")]:
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            logger.info("%s stopped.", name)
 
 
 app = FastAPI(

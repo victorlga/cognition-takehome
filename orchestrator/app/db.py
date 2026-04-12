@@ -141,6 +141,7 @@ async def upsert_issue(issue_id: int, **kwargs: Any) -> None:
 
 
 async def list_issues() -> list[dict[str, Any]]:
+    """Return all issue_state rows ordered by issue_id."""
     async with _connect() as db:
         cursor = await db.execute("SELECT * FROM issue_state ORDER BY issue_id")
         rows = await cursor.fetchall()
@@ -181,6 +182,23 @@ async def update_session_log(
             (status, now, duration_seconds, session_id),
         )
         await db.commit()
+
+
+async def list_active_sessions() -> list[dict[str, Any]]:
+    """Return all session_log rows where status = 'running'.
+
+    Used by the session tracker to know which Devin sessions to poll.
+    """
+    async with _connect() as conn:
+        cursor = await conn.execute(
+            "SELECT sl.*, ist.status AS issue_status "
+            "FROM session_log sl "
+            "JOIN issue_state ist ON sl.issue_id = ist.issue_id "
+            "WHERE sl.status = 'running' "
+            "ORDER BY sl.id"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
 
 async def list_session_logs(issue_id: int | None = None) -> list[dict[str, Any]]:

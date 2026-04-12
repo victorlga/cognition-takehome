@@ -12,8 +12,10 @@ import logging
 from typing import Any
 
 from app import db
+from app.config import settings
 from app.db import now_utc
 from app.devin_client import DevinClient
+from app.github_client import GitHubClient
 from app.prompts import IssueContext, build_builder_prompt, build_planner_prompt, build_reviewer_prompt
 
 logger = logging.getLogger(__name__)
@@ -45,15 +47,20 @@ async def handle_status_change(
     issue_url: str = "",
     issue_node_id: str = "",
     devin: DevinClient | None = None,
+    github: GitHubClient | None = None,
 ) -> dict[str, Any]:
     """Main entry point: react to a label-driven status change on an issue.
 
     Issue metadata is provided directly from the poller (or any other
     trigger) — no GraphQL round-trip needed.
 
+    If *github* is provided, the issue's ``state:*`` label is updated on
+    GitHub to stay in sync with the internal DB state.
+
     Returns a dict summarising the action taken.
     """
     devin = devin or DevinClient()
+    github = github or GitHubClient()
 
     # Ensure we have a local record
     existing = await db.get_issue(issue_number)
@@ -104,6 +111,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "planner"],
+                repos=[settings.github_repo],
+                title=f"[Planner] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["planner_session"] = session_id
@@ -127,6 +136,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "builder"],
+                repos=[settings.github_repo],
+                title=f"[Builder] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["builder_session"] = session_id
@@ -149,6 +160,8 @@ async def handle_status_change(
             session = await devin.create_session(
                 prompt=prompt,
                 tags=[f"issue-{issue_number}", "reviewer"],
+                repos=[settings.github_repo],
+                title=f"[Reviewer] #{issue_number}: {issue_title[:60]}",
             )
             session_id = session.get("session_id", "")
             update_fields["reviewer_session"] = session_id
@@ -170,4 +183,16 @@ async def handle_status_change(
         logger.warning("Issue #%d moved to error state", issue_number)
 
     await db.upsert_issue(issue_number, **update_fields)
+
+    # Sync the GitHub label to reflect the new internal state.
+    final_status = update_fields.get("status", new_status_lower)
+    try:
+        await github.set_state_label(issue_number, final_status)
+    except Exception:
+        logger.exception(
+            "Failed to sync state label for issue #%d to '%s'",
+            issue_number,
+            final_status,
+        )
+
     return result
