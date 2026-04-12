@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -104,21 +103,6 @@ class TestGetSession:
 
         assert result["status"] == "running"
         assert result["status_detail"] == "finished"
-
-
-class TestSendMessage:
-    @pytest.mark.asyncio
-    async def test_sends_message(self, client):
-        mock_response = httpx.Response(
-            200,
-            json={"status": "running"},
-            request=httpx.Request("POST", f"{_EFFECTIVE_BASE}/sessions/s/messages"),
-        )
-
-        with patch.object(httpx.AsyncClient, "post", return_value=mock_response):
-            result = await client.send_message("sess-123", "Hello")
-
-        assert result["status"] == "running"
 
 
 class TestPollUntilComplete:

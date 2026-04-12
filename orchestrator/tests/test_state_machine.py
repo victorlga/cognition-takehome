@@ -165,7 +165,7 @@ class TestHandleStatusChange:
 
     @pytest.mark.asyncio
     async def test_session_log_created(self, mock_devin):
-        result = await handle_status_change(
+        await handle_status_change(
             issue_number=42,
             new_status="Planning",
             devin=mock_devin,

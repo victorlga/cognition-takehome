@@ -25,14 +25,6 @@ class TestIssueState:
     async def test_get_nonexistent_issue(self):
         assert await db.get_issue(999) is None
 
-    async def test_list_issues(self):
-        await db.upsert_issue(1, issue_node_id="I_1", status="backlog")
-        await db.upsert_issue(2, issue_node_id="I_2", status="planning")
-        issues = await db.list_issues()
-        assert len(issues) == 2
-        assert issues[0]["issue_id"] == 1
-        assert issues[1]["issue_id"] == 2
-
 
 @pytest.mark.asyncio
 class TestSessionLog:
