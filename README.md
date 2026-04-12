@@ -6,16 +6,80 @@ An event-driven system that uses the [Devin API](https://docs.devin.ai/api-refer
 
 ## Table of Contents
 
-- [How It Works](#how-it-works)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
 - [Observability Dashboard](#observability-dashboard)
+- [Project Structure](#project-structure)
 - [Running Tests](#running-tests)
 - [Simulating the Workflow](#simulating-the-workflow)
 - [Tech Stack](#tech-stack)
 - [Further Documentation](#further-documentation)
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) (v2+)
+- A Devin API token from a [service user](https://app.devin.ai) (Team Settings > Service Users)
+- A GitHub Personal Access Token with `repo` scope
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/victorlga/cognition-takehome.git
+cd cognition-takehome
+```
+
+### 2. Configure environment variables
+
+Copy the example file and fill in your credentials:
+
+```bash
+cp .env.example .env
+# Edit .env with your actual values
+```
+
+### 3. Start the orchestrator
+
+```bash
+docker compose up --build
+```
+
+The orchestrator starts on **http://localhost:8000** with:
+
+- Polling enabled (checks GitHub every 30 seconds)
+- SQLite database at `./data/orchestrator.db`
+- Dashboard at **http://localhost:8000/dashboard**
+- Health check at **http://localhost:8000/health**
+- Metrics API at **http://localhost:8000/api/metrics**
+
+### 4. Seed sample data (optional)
+
+To populate the dashboard with sample data for demonstration:
+
+```bash
+docker compose exec orchestrator python -m scripts.seed_sample_data
+```
+
+---
+
+## Configuration
+
+All configuration is via environment variables (or a `.env` file). See [`.env.example`](.env.example) for a ready-to-use template.
+
+| Variable | Description | Default |
+|---|---|---|
+| `DEVIN_API_KEY` | Devin API token from a service user | *(required)* |
+| `DEVIN_ORG_ID` | Devin organization ID | *(required)* |
+| `GITHUB_TOKEN` | GitHub PAT with `repo` scope | *(required)* |
+| `POLL_INTERVAL_SECONDS` | How often the poller checks GitHub (seconds) | `30` |
+| `POLLING_ENABLED` | Enable/disable background polling | `true` |
+
+> **Note:** Use [Devin service users](https://app.devin.ai) for API authentication, not the legacy API keys page.
 
 ---
 
@@ -88,101 +152,6 @@ For the full architecture document, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTU
 
 ---
 
-## Project Structure
-
-```
-cognition-takehome/
-├── orchestrator/
-│   ├── app/
-│   │   ├── main.py            # FastAPI entry point + lifespan (poller startup)
-│   │   ├── config.py          # Settings from environment variables
-│   │   ├── poller.py          # Polling-based trigger (GitHub label detection)
-│   │   ├── state_machine.py   # Issue state transitions + Devin session dispatch
-│   │   ├── devin_client.py    # Async Devin API v3 wrapper
-│   │   ├── github_client.py   # Async GitHub API helper
-│   │   ├── prompts.py         # Planner / Builder / Reviewer prompt templates
-│   │   ├── scanner.py         # Periodic vulnerability scanner (stub)
-│   │   ├── db.py              # SQLite persistence + aggregate metrics
-│   │   └── dashboard.py       # Dashboard routes + metrics API
-│   ├── templates/
-│   │   └── dashboard.html     # Jinja2 + htmx + Chart.js dashboard
-│   ├── scripts/
-│   │   └── seed_sample_data.py  # Populate DB with sample data for demo
-│   ├── tests/                 # pytest suite (DB, state machine, poller, prompts, API client)
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── docs/                      # Planning, architecture, and phase docs
-├── docker-compose.yml
-└── .gitignore
-```
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) (v2+)
-- A Devin API token from a [service user](https://app.devin.ai) (Team Settings > Service Users)
-- A GitHub Personal Access Token with `repo` scope
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/victorlga/cognition-takehome.git
-cd cognition-takehome
-```
-
-### 2. Configure environment variables
-
-Create a `.env` file in the project root:
-
-```bash
-DEVIN_API_KEY=<your-devin-service-user-token>
-DEVIN_ORG_ID=<your-devin-org-id>
-GITHUB_TOKEN=<your-github-pat>
-```
-
-### 3. Start the orchestrator
-
-```bash
-docker compose up --build
-```
-
-The orchestrator starts on **http://localhost:8000** with:
-
-- Polling enabled (checks GitHub every 30 seconds)
-- SQLite database at `./data/orchestrator.db`
-- Dashboard at **http://localhost:8000/dashboard**
-- Health check at **http://localhost:8000/health**
-- Metrics API at **http://localhost:8000/api/metrics**
-
-### 4. Seed sample data (optional)
-
-To populate the dashboard with sample data for demonstration:
-
-```bash
-docker compose exec orchestrator python -m scripts.seed_sample_data
-```
-
----
-
-## Configuration
-
-All configuration is via environment variables (or a `.env` file):
-
-| Variable | Description | Default |
-|---|---|---|
-| `DEVIN_API_KEY` | Devin API token from a service user | *(required)* |
-| `DEVIN_ORG_ID` | Devin organization ID | *(required)* |
-| `GITHUB_TOKEN` | GitHub PAT with `repo` scope | *(required)* |
-| `POLL_INTERVAL_SECONDS` | How often the poller checks GitHub (seconds) | `30` |
-| `POLLING_ENABLED` | Enable/disable background polling | `true` |
-
-> **Note:** Use [Devin service users](https://app.devin.ai) for API authentication, not the legacy API keys page.
-
----
-
 ## Observability Dashboard
 
 The dashboard at `/dashboard` answers the question: **"If I were an engineering leader, how would I know this is working?"**
@@ -211,6 +180,37 @@ The dashboard at `/dashboard` answers the question: **"If I were an engineering 
 - Live feed of the last 20 session events with links to PRs and issues
 
 The dashboard auto-refreshes every 30 seconds via htmx. A JSON API is available at `/api/metrics` for programmatic access.
+
+---
+
+## Project Structure
+
+```
+cognition-takehome/
+├── orchestrator/
+│   ├── app/
+│   │   ├── main.py            # FastAPI entry point + lifespan (poller startup)
+│   │   ├── config.py          # Settings from environment variables
+│   │   ├── poller.py          # Polling-based trigger (GitHub label detection)
+│   │   ├── state_machine.py   # Issue state transitions + Devin session dispatch
+│   │   ├── devin_client.py    # Async Devin API v3 wrapper
+│   │   ├── github_client.py   # Async GitHub API helper
+│   │   ├── prompts.py         # Planner / Builder / Reviewer prompt templates
+│   │   ├── scanner.py         # Periodic vulnerability scanner (stub)
+│   │   ├── db.py              # SQLite persistence + aggregate metrics
+│   │   └── dashboard.py       # Dashboard routes + metrics API
+│   ├── templates/
+│   │   └── dashboard.html     # Jinja2 + htmx + Chart.js dashboard
+│   ├── scripts/
+│   │   └── seed_sample_data.py  # Populate DB with sample data for demo
+│   ├── tests/                 # pytest suite (DB, state machine, poller, prompts, API client)
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── docs/                      # Planning, architecture, and phase docs
+├── docker-compose.yml
+├── .env.example               # Template for required environment variables
+└── .gitignore
+```
 
 ---
 
