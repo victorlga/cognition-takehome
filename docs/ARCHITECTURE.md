@@ -320,14 +320,7 @@ All secrets are provided via environment variables. **Never hardcode.**
 cognition-takehome/
 ├── docs/
 │   ├── TAKEHOME.md
-│   ├── PLAN.md
-│   ├── ARCHITECTURE.md
-│   ├── PHASE_1.md
-│   ├── PHASE_2.md
-│   ├── PHASE_3.md
-│   ├── PHASE_4.md
-│   ├── PHASE_5.md
-│   └── PHASE_6.md
+│   └── ARCHITECTURE.md
 ├── orchestrator/
 │   ├── Dockerfile
 │   ├── pyproject.toml

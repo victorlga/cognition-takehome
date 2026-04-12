@@ -80,6 +80,7 @@ All configuration is via environment variables (or a `.env` file). See [`.env.ex
 | `GITHUB_TOKEN` | GitHub PAT with `repo` scope | *(required)* |
 | `POLL_INTERVAL_SECONDS` | How often the poller checks GitHub (seconds) | `30` |
 | `POLLING_ENABLED` | Enable/disable background polling | `true` |
+| `MAX_REBUILD_ATTEMPTS` | Max reviewer→builder rebuild cycles per issue | `3` |
 
 > **Note:** Use [Devin service users](https://app.devin.ai) for API authentication, not the legacy API keys page.
 
@@ -92,12 +93,16 @@ The orchestrator watches a GitHub repository for issues labeled `remediation-tar
 ```
 Backlog ──► Planning ──► Building ──► Reviewing ──► Done
              (Devin)      (Devin)      (Devin)
+                              ▲            │
+                              └── rebuild ──┘
 ```
 
 1. **Planning** -- A Devin session analyzes the issue, researches the codebase, and posts a step-by-step remediation plan as an issue comment.
 2. **Building** -- A Devin session implements the approved plan, writes tests, and opens a pull request.
-3. **Reviewing** -- A Devin session reviews the PR for correctness, security, and style, iterating until CI is green.
+3. **Reviewing** -- A Devin session reviews the PR for correctness, security, and style. If the reviewer requests changes, the orchestrator automatically triggers a rebuild (up to `MAX_REBUILD_ATTEMPTS` times) with the reviewer's feedback passed to a new builder session.
 4. **Done** -- The orchestrator records completion metrics after human merge.
+
+A **session tracker** runs alongside the poller, monitoring active Devin sessions via the Devin API. When a session completes, it updates the database, extracts PR URLs from builder sessions, and posts audit-trail comments on the corresponding GitHub issue.
 
 ### Trigger Mechanism
 
@@ -198,7 +203,7 @@ cognition-takehome/
 │   │   ├── devin_client.py    # Async Devin API v3 wrapper
 │   │   ├── github_client.py   # Async GitHub API helper
 │   │   ├── prompts.py         # Planner / Builder / Reviewer prompt templates
-│   │   ├── scanner.py         # Periodic vulnerability scanner (stub)
+│   │   ├── session_tracker.py # Background loop tracking Devin sessions to completion
 │   │   ├── db.py              # SQLite persistence + aggregate metrics
 │   │   └── dashboard.py       # Dashboard routes + metrics API
 │   ├── templates/
@@ -238,6 +243,7 @@ The test suite covers:
 - **Poller** -- Label extraction, poll cycle logic, idempotency
 - **Devin API client** -- Session creation, polling, message sending (mocked HTTP)
 - **Prompt templates** -- Template rendering with correct context injection
+- **Session tracker** -- Session completion detection, PR extraction, rebuild triggers, audit comments
 
 ---
 
@@ -271,9 +277,7 @@ Each label change triggers the corresponding Devin session type (planner, builde
 ## Further Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) -- Full system design, schema, prompt templates, and design decisions
-- [`docs/PLAN.md`](docs/PLAN.md) -- Master plan with phased implementation strategy
 - [`docs/TAKEHOME.md`](docs/TAKEHOME.md) -- Original assignment brief
-- [`docs/PHASE_1.md`](docs/PHASE_1.md) through [`docs/PHASE_6.md`](docs/PHASE_6.md) -- Per-phase implementation details
 
 ---
 
