@@ -203,3 +203,46 @@ The 4 picks tell a varied security story:
 - Real Devin API session creation not tested (mocked in unit tests) — requires API key in environment
 - Webhook payload parsing assumes `changes.field_value.to.name` contains the new status column name — needs validation against real GitHub Projects v2 payloads once Phase 1 creates the board
 - Scanner module is a stub — full implementation deferred to Phase 3
+
+---
+
+## [PHASE_2_FIX] — 2026-04-12 — Replace projects_v2_item webhook with label-based state machine driver
+
+**What changed:**
+- Replaced `projects_v2_item` webhook trigger with **issue label transitions** (`state:*` labels) as the primary state machine driver
+- `webhook.py`: now handles `issues` events with `labeled` action instead of `projects_v2_item` events; extracts status from `state:*` label names via `LABEL_STATUS_MAP`
+- `state_machine.py`: accepts issue metadata (number, title, body, URL, node_id) directly from the webhook payload — removed the GraphQL `content_node_id` resolution round-trip
+- `github_client.py`: added `remove_label()` and `set_state_label()` helpers for managing `state:*` labels on issues
+- Updated all tests (62 tests, all passing) to use label-based payloads
+- Updated `docs/ARCHITECTURE.md`: primary trigger section, Mermaid diagram, webhook payload example, design decisions table
+- Updated `docs/PHASE_2.md`: procedure steps, mock payload examples, deliverables checklist
+
+**Why this was needed:**
+- Phase 1 discovered that `projects_v2_item` webhook events are **not supported** on repository-level webhooks for user-owned repos (GitHub returns 422: "These events are not allowed for this hook")
+- Classic project events (`project`, `project_card`, `project_column`) are allowed but only work with Projects v1, not the v2 board in use
+- The label-based approach was already documented as a fallback in ARCHITECTURE.md and is now promoted to the primary trigger
+
+**Files touched:**
+- `orchestrator/app/webhook.py` (modified)
+- `orchestrator/app/state_machine.py` (modified)
+- `orchestrator/app/github_client.py` (modified)
+- `orchestrator/tests/test_webhook.py` (modified)
+- `orchestrator/tests/test_state_machine.py` (modified)
+- `docs/ARCHITECTURE.md` (modified — updated trigger mechanism docs)
+- `docs/PHASE_2.md` (modified — updated procedure and deliverables)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All 62 unit tests pass: `python -m pytest orchestrator/tests/ -v`
+- GitHub API verified: `projects_v2_item` returns 422 on repo webhook; `issues` events are already configured on webhook ID 605878262
+- Label extraction logic tested for all 4 states plus edge cases (case-insensitive, unknown states, non-state labels)
+
+**What the next phase needs to know:**
+- Webhook endpoint: `POST /webhooks/github` (expects `issues` events with `state:*` labels, NOT `projects_v2_item`)
+- To trigger a state transition: apply a `state:planning`, `state:building`, `state:reviewing`, or `state:done` label to an issue on the fork
+- The webhook on `victorlga/superset` (ID 605878262) is already configured for `issues` events — no infrastructure changes needed
+- The Projects v2 board is still used for visual kanban tracking but does not drive the orchestrator
+
+**Open questions / known gaps:**
+- `set_state_label()` and `remove_label()` are implemented but not yet called from the state machine — future phases may use them to sync labels after internal state changes
+- Real end-to-end test (apply label → webhook fires → Devin session created) not yet performed — requires webhook URL to be pointed at a running orchestrator instance

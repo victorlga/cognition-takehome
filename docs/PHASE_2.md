@@ -28,8 +28,8 @@ Build the FastAPI orchestrator that receives GitHub webhooks, manages issue stat
 - **FastAPI** (Python 3.12) with `httpx` for async HTTP
 - **SQLite** via `aiosqlite` for persistence
 - **Docker Compose** for deployment
-- **GitHub Projects v2 webhooks** (`projects_v2_item.edited`) as primary trigger
-- **Issue labels** (`state:planning`, `state:building`, etc.) as fallback trigger
+- **Issue label transitions** (`state:planning`, `state:building`, etc.) as primary trigger — `projects_v2_item` webhooks are not supported on repo-level webhooks for user-owned repos (GitHub returns 422)
+- The GitHub Projects v2 board is still used for visual kanban tracking but does not drive the state machine
 - Prompt templates for planner/builder/reviewer defined in `ARCHITECTURE.md`
 - DB schema defined in `ARCHITECTURE.md`
 - Directory structure defined in `ARCHITECTURE.md`
@@ -157,7 +157,7 @@ Template-based prompt builder using the templates from `ARCHITECTURE.md`:
 ### Step 7: Implement `state_machine.py`
 
 State transition logic:
-- `handle_status_change(item_id, old_status, new_status)` — the main entry point
+- `handle_status_change(issue_number, new_status, issue_title, ...)` — the main entry point
 - Maps status transitions to Devin session creation
 - Validates transitions (no skipping states)
 - Updates `issue_state` table
@@ -172,8 +172,8 @@ FastAPI router for the webhook endpoint:
 async def github_webhook(request: Request):
     # 1. Verify HMAC-SHA256 signature
     # 2. Parse event type from X-GitHub-Event header
-    # 3. Handle projects_v2_item.edited events
-    # 4. Extract status field change from payload
+    # 3. Handle issues.labeled events (state:* labels)
+    # 4. Extract status from label name
     # 5. Delegate to state_machine.handle_status_change()
     # 6. Return 200 OK
 ```
@@ -234,12 +234,12 @@ docker compose up --build -d
 # Health check
 curl http://localhost:8000/health
 
-# Test webhook with a mock payload
+# Test webhook with a mock payload (label-based trigger)
 curl -X POST http://localhost:8000/webhooks/github \
   -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: projects_v2_item" \
+  -H "X-GitHub-Event: issues" \
   -H "X-Hub-Signature-256: sha256=<computed>" \
-  -d '{"action": "edited", "changes": {"field_value": {"field_node_id": "test"}}, "projects_v2_item": {"id": 1, "content_node_id": "I_test", "content_type": "Issue"}}'
+  -d '{"action": "labeled", "label": {"name": "state:planning"}, "issue": {"number": 1, "title": "Test issue", "body": "...", "html_url": "https://github.com/victorlga/superset/issues/1", "node_id": "I_test"}}'
 
 # Check metrics stub
 curl http://localhost:8000/api/metrics
@@ -262,7 +262,7 @@ Run with: `python -m pytest orchestrator/tests/ -v`
 - [ ] `orchestrator/` directory with all source files
 - [ ] `Dockerfile` that builds cleanly
 - [ ] `docker-compose.yml` at repo root
-- [ ] Webhook endpoint that verifies HMAC and parses `projects_v2_item` events
+- [ ] Webhook endpoint that verifies HMAC and parses `issues` events with `state:*` labels
 - [ ] Devin API client that can create sessions, poll status, send messages
 - [ ] State machine with SQLite persistence
 - [ ] Prompt templates for planner/builder/reviewer
