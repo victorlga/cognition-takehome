@@ -34,6 +34,7 @@ flowchart TB
         PlannerSession["Planner Devin Session"]
         BuilderSession["Builder Devin Session"]
         ReviewerSession["Reviewer Devin Session"]
+        RebuildSession["Rebuild Devin Session"]
         ScannerSession["Scanner Devin Session"]
     end
 
@@ -53,6 +54,12 @@ flowchart TB
     ReviewerSession -- "review comments\n+ CI loop" --> PRs
 
     PRs -- "Reviewing → Done\n(human merge)" --> Project
+
+    %% Rebuild loop (reviewer requests changes)
+    Tracker -- "reviewer completed +\nchanges_requested" --> SM
+    SM -- "Reviewing → Building\n(rebuild)" --> DevinClient
+    DevinClient -- "create session\n(rebuild prompt +\nreviewer feedback)" --> RebuildSession
+    RebuildSession -- "pushes fixes\nto existing PR" --> PRs
 
     %% Session tracking (polls Devin API for active sessions)
     Tracker -- "poll active sessions" --> DevinClient
@@ -112,6 +119,7 @@ A background `asyncio` task polls the GitHub API every N seconds (default: 30) f
 | `state:building` | Planning → Building | **Builder**: executes the approved plan, writes code, opens a PR |
 | `state:reviewing` | Building → Reviewing | **Reviewer**: reviews the PR, runs tests, iterates with builder until CI is green |
 | `state:done` | Reviewing → Done | Log completion — orchestrator records metrics |
+| *(auto)* | Reviewing → Building | **Rebuild**: triggered automatically when a reviewer requests changes. The session tracker detects `CHANGES_REQUESTED` on the PR, collects the reviewer's feedback, and spawns a new builder session to address the findings. Capped at `max_rebuild_attempts` (default: 3). |
 
 **Polling flow:**
 1. `GET /repos/{repo}/issues?labels=remediation-target&state=open` (paginated)
@@ -155,7 +163,8 @@ CREATE TABLE issue_state (
     planning_started_at TEXT,   -- timestamp when moved to planning
     building_started_at TEXT,   -- timestamp when moved to building
     reviewing_started_at TEXT,  -- timestamp when moved to reviewing
-    done_at         TEXT,       -- timestamp when moved to done
+    done_at             TEXT,   -- timestamp when moved to done
+    rebuild_count       INTEGER NOT NULL DEFAULT 0,  -- number of rebuild attempts
     error_message   TEXT
 );
 
@@ -235,6 +244,27 @@ Instructions:
 Output: Review comments on the PR. Final status: approved or changes_requested.
 ```
 
+### Rebuild Prompt (template)
+```
+You are a senior engineer. A code reviewer found problems with a PR. Fix them.
+
+PR: {pr_url}
+Related Issue: {issue_url}
+Rebuild attempt: {rebuild_count}
+
+Reviewer Feedback:
+{review_feedback}
+
+Instructions:
+1. Check out the existing PR branch — do NOT create a new branch.
+2. Read the reviewer's feedback carefully.
+3. Address every issue raised by the reviewer.
+4. Run the relevant test suite to verify your fixes.
+5. Push your changes to the same PR branch.
+
+Output: Updated commits pushed to the existing PR branch.
+```
+
 ---
 
 ## Observability
@@ -278,6 +308,7 @@ All secrets are provided via environment variables. **Never hardcode.**
 | `GITHUB_TOKEN` | GitHub PAT with `repo`, `project`, `admin:org` scopes | GitHub → Settings → Developer Settings → PAT (fine-grained) | Orchestrator → GitHub API, `gh` CLI |
 | `POLL_INTERVAL_SECONDS` | Polling interval in seconds (default: 30) | Set in `.env` or `docker-compose.yml` | Poller background task |
 | `POLLING_ENABLED` | Enable/disable the background poller (default: true) | Set in `.env` or `docker-compose.yml` | Poller background task |
+| `MAX_REBUILD_ATTEMPTS` | Maximum rebuild attempts before giving up (default: 3) | Set in `.env` or `docker-compose.yml` | State machine rebuild logic |
 
 > **Note:** The legacy "API Keys" page on Devin is deprecated. Use **Service Users** instead. A service user named `takehome` with Admin access has already been created for this project.
 
@@ -334,3 +365,4 @@ cognition-takehome/
 | 7 | **Scheduled Devin** for periodic scans | Cron in orchestrator | Demonstrates another Devin API capability (scheduled sessions). Enriches the event-driven narrative. |
 | 8 | **Docker Compose** for deployment | Kubernetes, bare metal | Required by take-home spec. Simple, portable, reproducible. |
 | 9 | **Bidirectional GitHub sync** for label + comment feedback | Fire-and-forget, manual label management | `set_state_label()` in the state machine and `post_issue_comment()` in the session tracker close the feedback loop. The issue thread becomes the audit trail. Label sync makes the system self-driving — no human needs to manually update labels after the initial trigger. |
+| 10 | **Auto-rebuild** on reviewer changes_requested | Manual re-trigger, single-pass pipeline | When the reviewer Devin session requests changes, the session tracker automatically detects `CHANGES_REQUESTED` on the PR, collects reviewer feedback (review bodies + inline comments), and triggers a `reviewing → building` transition. The rebuild session receives the reviewer's specific feedback in its prompt. Capped at `max_rebuild_attempts` (default: 3) to prevent infinite loops. |

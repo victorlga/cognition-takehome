@@ -80,6 +80,31 @@ Focus on the code review — status tracking is handled externally.
 Output: Review comments on the PR. Final status: approved or changes_requested.\
 """
 
+REBUILD_TEMPLATE = """\
+You are a senior engineer. A code reviewer found problems with a PR. Fix them.
+
+PR: {pr_url}
+Related Issue: {issue_url}
+Rebuild attempt: {rebuild_count}
+
+Reviewer Feedback:
+{review_feedback}
+
+Repository: victorlga/superset
+
+Instructions:
+1. Check out the existing PR branch — do NOT create a new branch.
+2. Read the reviewer's feedback carefully.
+3. Address every issue raised by the reviewer (failing tests, security gaps, style nits).
+4. Run the relevant test suite to verify your fixes.
+5. Push your changes to the same PR branch.
+
+Note: The orchestrator automatically posts status updates on the issue thread.
+Focus on fixing the reviewer's findings — do not post duplicate status comments.
+
+Output: Updated commits pushed to the existing PR branch.\
+"""
+
 
 def build_planner_prompt(issue: IssueContext) -> str:
     """Build the planner session prompt."""
@@ -104,4 +129,16 @@ def build_reviewer_prompt(issue: IssueContext, pr_url: str) -> str:
     return REVIEWER_TEMPLATE.format(
         pr_url=pr_url,
         issue_url=issue.issue_url,
+    )
+
+
+def build_rebuild_prompt(
+    issue: IssueContext, pr_url: str, review_feedback: str, rebuild_count: int,
+) -> str:
+    """Build the rebuild builder prompt with reviewer feedback."""
+    return REBUILD_TEMPLATE.format(
+        pr_url=pr_url,
+        issue_url=issue.issue_url,
+        review_feedback=review_feedback,
+        rebuild_count=rebuild_count,
     )

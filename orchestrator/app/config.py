@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     devin_api_base: str = "https://api.devin.ai/v3"
     poll_interval_seconds: int = 30
     polling_enabled: bool = True
+    max_rebuild_attempts: int = 3
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

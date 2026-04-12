@@ -10,8 +10,11 @@ from app import db
 from app.session_tracker import (
     _build_status_comment,
     _compute_duration,
+    _extract_pr_number,
     _extract_pr_url,
     _final_status_label,
+    _format_review_feedback,
+    _maybe_trigger_rebuild,
     check_active_sessions,
 )
 
@@ -316,6 +319,145 @@ class TestCheckActiveSessions:
         assert len(updates) == 0
         logs = await db.list_session_logs(issue_id=12)
         assert logs[0]["status"] == "running"
+
+
+class TestExtractPrNumber:
+    def test_extracts_number(self):
+        assert _extract_pr_number("https://github.com/org/repo/pull/5") == 5
+
+    def test_extracts_number_trailing_slash(self):
+        assert _extract_pr_number("https://github.com/org/repo/pull/42/") == 42
+
+    def test_returns_none_for_empty(self):
+        assert _extract_pr_number("") is None
+
+    def test_returns_none_for_non_pr_url(self):
+        assert _extract_pr_number("https://github.com/org/repo/issues/5") is None
+
+    def test_returns_none_for_malformed(self):
+        assert _extract_pr_number("https://github.com/org/repo/pull") is None
+
+
+class TestFormatReviewFeedback:
+    def test_includes_changes_requested_body(self):
+        reviews = [
+            {
+                "state": "CHANGES_REQUESTED",
+                "body": "Fix the failing tests.",
+                "user": {"login": "reviewer1"},
+            }
+        ]
+        result = _format_review_feedback(reviews, [])
+        assert "Fix the failing tests." in result
+        assert "reviewer1" in result
+
+    def test_includes_inline_comments(self):
+        comments = [
+            {
+                "path": "src/app.py",
+                "line": 42,
+                "body": "This line is unsafe.",
+            }
+        ]
+        result = _format_review_feedback([], comments)
+        assert "src/app.py" in result
+        assert "This line is unsafe." in result
+
+    def test_returns_fallback_when_empty(self):
+        result = _format_review_feedback([], [])
+        assert "No detailed feedback" in result
+
+    def test_skips_approved_reviews(self):
+        reviews = [
+            {"state": "APPROVED", "body": "Looks good!", "user": {"login": "r1"}}
+        ]
+        result = _format_review_feedback(reviews, [])
+        assert "Looks good!" not in result
+
+
+@pytest.mark.asyncio
+class TestMaybeTriggerRebuild:
+    async def test_triggers_rebuild_on_changes_requested(self):
+        """When the PR has a CHANGES_REQUESTED review, a rebuild is triggered."""
+        await db.upsert_issue(
+            20, issue_node_id="I_20", status="reviewing",
+            pr_url="https://github.com/org/repo/pull/10",
+            title="Test issue",
+        )
+
+        mock_devin = AsyncMock()
+        mock_devin.create_session.return_value = {"session_id": "sess-rebuild-1"}
+        mock_github = AsyncMock()
+        mock_github.get_pr_reviews.return_value = [
+            {"state": "CHANGES_REQUESTED", "body": "Fix tests", "user": {"login": "rev"}},
+        ]
+        mock_github.get_pr_review_comments.return_value = []
+
+        await _maybe_trigger_rebuild(
+            issue_id=20, devin=mock_devin, github=mock_github,
+        )
+
+        # Should have called handle_status_change which creates a session
+        mock_devin.create_session.assert_called_once()
+        issue = await db.get_issue(20)
+        assert issue["status"] == "building"
+        assert issue["rebuild_count"] == 1
+
+    async def test_skips_rebuild_when_approved(self):
+        """If the most recent review is APPROVED, no rebuild is triggered."""
+        await db.upsert_issue(
+            21, issue_node_id="I_21", status="reviewing",
+            pr_url="https://github.com/org/repo/pull/11",
+        )
+
+        mock_devin = AsyncMock()
+        mock_github = AsyncMock()
+        mock_github.get_pr_reviews.return_value = [
+            {"state": "CHANGES_REQUESTED", "body": "Fix", "user": {"login": "r"}},
+            {"state": "APPROVED", "body": "LGTM", "user": {"login": "r"}},
+        ]
+
+        await _maybe_trigger_rebuild(
+            issue_id=21, devin=mock_devin, github=mock_github,
+        )
+
+        mock_devin.create_session.assert_not_called()
+        issue = await db.get_issue(21)
+        assert issue["status"] == "reviewing"  # unchanged
+
+    async def test_skips_rebuild_when_no_pr_url(self):
+        """If the issue has no PR URL, rebuild is skipped."""
+        await db.upsert_issue(
+            22, issue_node_id="I_22", status="reviewing",
+            pr_url="",
+        )
+
+        mock_devin = AsyncMock()
+        mock_github = AsyncMock()
+
+        await _maybe_trigger_rebuild(
+            issue_id=22, devin=mock_devin, github=mock_github,
+        )
+
+        mock_devin.create_session.assert_not_called()
+        mock_github.get_pr_reviews.assert_not_called()
+
+    async def test_skips_rebuild_when_not_reviewing(self):
+        """If the issue is not in 'reviewing' status, rebuild is skipped."""
+        await db.upsert_issue(
+            23, issue_node_id="I_23", status="building",
+            pr_url="https://github.com/org/repo/pull/12",
+        )
+
+        mock_devin = AsyncMock()
+        mock_github = AsyncMock()
+
+        await _maybe_trigger_rebuild(
+            issue_id=23, devin=mock_devin, github=mock_github,
+        )
+
+        mock_devin.create_session.assert_not_called()
+        mock_github.get_pr_reviews.assert_not_called()
 
 
 class TestBuildStatusComment:

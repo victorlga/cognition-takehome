@@ -25,6 +25,7 @@ from app import db
 from app.config import settings
 from app.devin_client import DevinClient, TERMINAL_STATUSES, SETTLED_DETAIL
 from app.github_client import GitHubClient
+from app.state_machine import handle_status_change
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,20 @@ async def check_active_sessions(
 
         updates.append(update)
 
+        # --- Auto-rebuild: reviewer completed with changes_requested ---
+        if session_type == "reviewer" and log_status == "completed":
+            try:
+                await _maybe_trigger_rebuild(
+                    issue_id=issue_id,
+                    devin=devin,
+                    github=github,
+                )
+            except Exception:
+                logger.exception(
+                    "Tracker: failed to evaluate rebuild for issue #%d",
+                    issue_id,
+                )
+
         logger.info(
             "Tracker: session %s (%s) for issue #%d → %s (took %ds)",
             session_id,
@@ -216,6 +231,129 @@ async def check_active_sessions(
         )
 
     return updates
+
+
+def _extract_pr_number(pr_url: str) -> int | None:
+    """Extract the PR number from a GitHub PR URL.
+
+    E.g. ``https://github.com/org/repo/pull/5`` → ``5``.
+    """
+    if not pr_url:
+        return None
+    parts = pr_url.rstrip("/").split("/")
+    try:
+        idx = parts.index("pull")
+        return int(parts[idx + 1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _format_review_feedback(
+    reviews: list[dict[str, Any]],
+    comments: list[dict[str, Any]],
+) -> str:
+    """Build a Markdown summary of reviewer feedback for the rebuild prompt."""
+    lines: list[str] = []
+
+    # Top-level review bodies (from reviews with state=CHANGES_REQUESTED)
+    for review in reviews:
+        state = review.get("state", "")
+        body = (review.get("body") or "").strip()
+        if state == "CHANGES_REQUESTED" and body:
+            user = review.get("user", {}).get("login", "reviewer")
+            lines.append(f"### Review by {user} (changes requested)\n{body}\n")
+
+    # Inline file-level comments
+    if comments:
+        lines.append("### Inline comments\n")
+        for c in comments:
+            path = c.get("path", "unknown")
+            line_num = c.get("original_line") or c.get("line") or "?"
+            body = (c.get("body") or "").strip()
+            if body:
+                lines.append(f"- **{path}:{line_num}** — {body}")
+
+    return "\n".join(lines) if lines else "(No detailed feedback found.)"
+
+
+async def _maybe_trigger_rebuild(
+    issue_id: int,
+    devin: DevinClient,
+    github: GitHubClient,
+) -> None:
+    """Check if the reviewer requested changes and auto-trigger a rebuild.
+
+    Called by :func:`check_active_sessions` after a reviewer session
+    completes.  Looks at the PR's GitHub reviews for a
+    ``CHANGES_REQUESTED`` status.  If found, collects review feedback
+    and triggers the ``reviewing → building`` transition via the state
+    machine.
+    """
+    issue = await db.get_issue(issue_id)
+    if not issue:
+        return
+
+    # Only act if the issue is still in "reviewing" state.
+    if issue.get("status") != "reviewing":
+        logger.info(
+            "Tracker: issue #%d is '%s', not 'reviewing' — skipping rebuild check",
+            issue_id, issue.get("status"),
+        )
+        return
+
+    pr_url = issue.get("pr_url", "")
+    pr_number = _extract_pr_number(pr_url)
+    if not pr_number:
+        logger.warning(
+            "Tracker: issue #%d has no valid PR URL — cannot check reviews",
+            issue_id,
+        )
+        return
+
+    # Fetch PR reviews from GitHub
+    reviews = await github.get_pr_reviews(pr_number)
+
+    # Look for the most recent CHANGES_REQUESTED review
+    has_changes_requested = any(
+        r.get("state") == "CHANGES_REQUESTED" for r in reviews
+    )
+    # Also check if there's a more recent APPROVED that overrides
+    has_approved = False
+    for r in reversed(reviews):
+        state = r.get("state", "")
+        if state == "APPROVED":
+            has_approved = True
+            break
+        if state == "CHANGES_REQUESTED":
+            break
+
+    if not has_changes_requested or has_approved:
+        logger.info(
+            "Tracker: issue #%d PR #%d — no actionable changes_requested review",
+            issue_id, pr_number,
+        )
+        return
+
+    # Collect feedback for the rebuild prompt
+    inline_comments = await github.get_pr_review_comments(pr_number)
+    review_feedback = _format_review_feedback(reviews, inline_comments)
+
+    logger.info(
+        "Tracker: issue #%d — reviewer requested changes on PR #%d, triggering rebuild",
+        issue_id, pr_number,
+    )
+
+    await handle_status_change(
+        issue_number=issue_id,
+        new_status="building",
+        issue_title=issue.get("title", ""),
+        issue_body="",
+        issue_url=f"https://github.com/{settings.github_repo}/issues/{issue_id}",
+        issue_node_id=issue.get("issue_node_id", ""),
+        devin=devin,
+        github=github,
+        review_feedback=review_feedback,
+    )
 
 
 async def start_session_tracker_loop() -> None:

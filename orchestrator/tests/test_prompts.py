@@ -4,6 +4,7 @@ from app.prompts import (
     IssueContext,
     build_builder_prompt,
     build_planner_prompt,
+    build_rebuild_prompt,
     build_reviewer_prompt,
 )
 
@@ -75,3 +76,28 @@ class TestReviewerPrompt:
     def test_contains_security_review_instruction(self):
         prompt = build_reviewer_prompt(_make_ctx(), "https://pr")
         assert "security" in prompt.lower()
+
+
+class TestRebuildPrompt:
+    def test_contains_pr_url(self):
+        pr = "https://github.com/victorlga/superset/pull/5"
+        prompt = build_rebuild_prompt(_make_ctx(), pr, "Fix tests", 1)
+        assert pr in prompt
+
+    def test_contains_review_feedback(self):
+        feedback = "Three tests are failing in test_security.py"
+        prompt = build_rebuild_prompt(_make_ctx(), "https://pr", feedback, 1)
+        assert feedback in prompt
+
+    def test_contains_rebuild_count(self):
+        prompt = build_rebuild_prompt(_make_ctx(), "https://pr", "feedback", 2)
+        assert "2" in prompt
+
+    def test_contains_issue_url(self):
+        ctx = _make_ctx()
+        prompt = build_rebuild_prompt(ctx, "https://pr", "feedback", 1)
+        assert ctx.issue_url in prompt
+
+    def test_instructs_to_fix(self):
+        prompt = build_rebuild_prompt(_make_ctx(), "https://pr", "feedback", 1)
+        assert "fix" in prompt.lower() or "address" in prompt.lower()
