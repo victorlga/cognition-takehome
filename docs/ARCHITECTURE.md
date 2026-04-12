@@ -90,6 +90,14 @@ flowchart TB
 
 ---
 
+## Session Lifecycle
+
+When the pipeline advances (e.g. `planning → building`), the state machine **finalizes the previous session** by marking its `session_log` entry as `completed`. This is the primary mechanism that keeps the dashboard accurate.
+
+As a safety net, the **session tracker** also checks whether an active session has been superseded: if the Devin API reports a session as `running` but the issue has already advanced past that session's stage, the tracker overrides the status to `completed`.
+
+---
+
 ## Event Flow — Detailed
 
 ### Primary Trigger: Polling-Based Label Detection
@@ -156,7 +164,7 @@ CREATE TABLE session_log (
     issue_id        INTEGER NOT NULL,
     session_id      TEXT NOT NULL,
     session_type    TEXT NOT NULL,  -- planner|builder|reviewer|scanner
-    status          TEXT NOT NULL,  -- running|completed|error
+    status          TEXT NOT NULL,  -- running|completed|failed
     started_at      TEXT NOT NULL,
     finished_at     TEXT,
     duration_seconds INTEGER,
@@ -235,21 +243,16 @@ The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engi
 
 ### Metrics — What a VP of Engineering Wants to See
 
-**Pipeline Health ("Is the system working right now?")**
+Focused on three questions (per TAKEHOME.md Section 3):
+
+**Task Status ("What is active and what is done?")**
+- **Issues Remediated** — count of issues at `done` vs. total. The headline throughput metric.
 - **Active Devin Sessions** — count of running planner/builder/reviewer sessions, broken down by type. Answers: "How busy is the system?"
-- **Issues by Status** — bar chart: backlog / planning / building / reviewing / done / error. Answers: "Where are things stuck?" A pile-up in any column signals a bottleneck.
-- **Error Rate** — % of sessions that ended in error, with most recent error messages. Answers: "Is something broken?"
+- **Pipeline Status** — horizontal bar chart: backlog / planning / building / reviewing / done / error. Answers: "Where are things stuck?"
 
-**Velocity & Efficiency ("Is this worth the investment?")**
-- **Time-to-Remediation (TTR)** — median and p90 time from issue entering Planning to PR merged. The headline metric. Broken down by stage (planning time, build time, review time) to show where time is spent.
-- **Throughput** — issues remediated per day/week. Trend line shows whether the system is accelerating.
-- **Session Success Rate** — % of Devin sessions that complete without error. Track over time to show reliability improving.
-- **Devin Compute Cost per Fix** — total session-minutes / issues completed. Proxy for cost-efficiency. (Computed from `session_log.duration_seconds`.)
-
-**Risk Posture ("Are we safer than yesterday?")**
-- **Open vs. Closed Vulnerability Trend** — line chart showing cumulative issues filed vs. issues remediated over time. The gap should be shrinking.
-- **Severity Breakdown** — issues by category (security / high-impact bug / dependency / SAST). Shows the system handles diverse risk types, not just version bumps.
-- **Mean Time to First Response (MTFR)** — time from issue creation to first planner session starting. Measures how quickly the system reacts.
+**Success / Failure ("Is the system reliable?")**
+- **Session Success Rate** — % of Devin sessions that complete without error (completed / total).
+- **Failed Sessions** — count of sessions that ended in `failed` status.
 
 **Recent Activity ("What just happened?")**
 - **Activity Feed** — latest 20 session events: session type, issue, status, duration, with links to PRs and issues. A VP can glance at this and understand the current state without digging.
@@ -260,7 +263,7 @@ The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engi
 - Auto-refreshes via htmx polling every 30 seconds
 - JSON API at `/api/metrics` for programmatic access
 - JSON API at `/api/issues` for listing all tracked issues
-- Dashboard layout: 4 summary cards at top (TTR, throughput, success rate, active sessions), two chart rows (pipeline funnel + trend lines), activity feed at bottom
+- Dashboard layout: 3 summary cards at top (issues remediated, active sessions, success rate), pipeline status chart, activity feed at bottom
 
 ---
 

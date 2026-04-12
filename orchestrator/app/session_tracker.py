@@ -28,6 +28,16 @@ from app.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
+# Maps session_type to the issue_state.status where that session is
+# the active worker.  Used to detect sessions that have been superseded
+# by a pipeline advance (e.g. planner session still "running" after the
+# issue moved to "building").
+_SESSION_STAGE: dict[str, str] = {
+    "planner": "planning",
+    "builder": "building",
+    "reviewer": "reviewing",
+}
+
 
 def _extract_pr_url(session_data: dict[str, Any]) -> str | None:
     """Return the first PR URL from a Devin session response, or None."""
@@ -134,8 +144,19 @@ async def check_active_sessions(
 
         log_status = _final_status_label(api_status, api_detail)
         if log_status == "running":
-            # Still in progress — nothing to do yet.
-            continue
+            # Check if the issue has advanced past this session's stage.
+            expected_stage = _SESSION_STAGE.get(session_type)
+            issue_status: str = row.get("issue_status", "")
+            if expected_stage and issue_status != expected_stage:
+                # Issue moved on — this session's work is done.
+                log_status = "completed"
+                logger.info(
+                    "Tracker: session %s (%s) superseded — issue #%d moved to '%s'",
+                    session_id, session_type, issue_id, issue_status,
+                )
+            else:
+                # Still in progress — nothing to do yet.
+                continue
 
         duration = _compute_duration(started_at)
         await db.update_session_log(session_id, log_status, duration_seconds=duration)

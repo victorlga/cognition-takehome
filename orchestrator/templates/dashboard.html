@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vulnerability Remediation System &mdash; Dashboard</title>
+  <title>Vulnerability Remediation &mdash; Dashboard</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <style>
@@ -36,18 +36,8 @@
     }
 
     /* ---- Grid Layouts ---- */
-    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
-    @media (max-width: 1024px) {
-      .grid-4 { grid-template-columns: repeat(2, 1fr); }
-      .grid-3 { grid-template-columns: 1fr; }
-      .grid-2 { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 640px) {
-      .grid-4 { grid-template-columns: 1fr; }
-      body { padding: 1rem; }
-    }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    @media (max-width: 768px) { .grid-3 { grid-template-columns: 1fr; } }
 
     /* ---- Cards ---- */
     .card {
@@ -60,20 +50,14 @@
       font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
       letter-spacing: 0.06em; color: #6c757d; margin-bottom: 0.25rem;
     }
-    .card-value {
-      font-size: 2rem; font-weight: 700; line-height: 1.2;
-    }
+    .card-value { font-size: 2rem; font-weight: 700; line-height: 1.2; }
     .card-sub { font-size: 0.8rem; color: #6c757d; margin-top: 0.25rem; }
 
     /* ---- Colour Variants ---- */
-    .text-blue { color: #4361ee; }
     .text-green { color: #2ec4b6; }
     .text-amber { color: #e9c46a; }
     .text-red { color: #e63946; }
     .text-purple { color: #7209b7; }
-
-    .bg-green-light { background: #eafaf7; }
-    .bg-red-light { background: #fdecea; }
 
     /* ---- Status Badges ---- */
     .badge {
@@ -89,11 +73,11 @@
     .badge-error { background: #f8d7da; color: #721c24; }
     .badge-running { background: #cce5ff; color: #004085; }
     .badge-completed { background: #d4edda; color: #155724; }
+    .badge-failed { background: #f8d7da; color: #721c24; }
 
     /* ---- Chart containers ---- */
     .chart-container { position: relative; width: 100%; }
     .chart-container canvas { max-height: 280px; }
-    .chart-container-donut { max-width: 260px; margin: 0 auto; }
 
     /* ---- Activity Feed Table ---- */
     .feed-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -109,18 +93,6 @@
     .feed-table tbody tr:hover { background: #f8f9fa; }
     .feed-table a { color: #4361ee; text-decoration: none; }
     .feed-table a:hover { text-decoration: underline; }
-
-    /* ---- Error card ---- */
-    .error-indicator {
-      display: flex; align-items: center; gap: 0.5rem;
-      font-size: 0.85rem; margin-top: 0.5rem;
-    }
-    .error-dot {
-      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-    }
-    .error-dot.ok { background: #2ec4b6; }
-    .error-dot.warn { background: #e63946; animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
     /* ---- Refresh indicator ---- */
     .refresh-bar {
@@ -140,7 +112,7 @@
   <!-- ================================================================== -->
   <div class="header">
     <div>
-      <h1>Vulnerability Remediation System &mdash; Dashboard</h1>
+      <h1>Vulnerability Remediation &mdash; Dashboard</h1>
       <div class="subtitle">
         Auto-refreshes every 30 s &bull; Last updated: <span id="last-updated">{{ now }}</span>
       </div>
@@ -157,35 +129,28 @@
        hx-on::after-request="window.__refreshCharts && window.__refreshCharts(event)">
 
   <!-- ================================================================== -->
-  <!-- SUMMARY CARDS ROW                                                   -->
+  <!-- SUMMARY CARDS                                                       -->
   <!-- ================================================================== -->
   <div class="section-title">Key Metrics</div>
-  <div class="grid-4">
-    <!-- Median TTR -->
-    <div class="card">
-      <div class="card-label">Median TTR</div>
-      <div class="card-value text-blue" id="card-ttr">
-        {% if metrics.median_time_to_remediation_hours is not none %}
-          {{ metrics.median_time_to_remediation_hours }}h
-        {% else %}
-          &mdash;
-        {% endif %}
-      </div>
-      <div class="card-sub">
-        p90:
-        {% if metrics.p90_time_to_remediation_hours is not none %}
-          {{ metrics.p90_time_to_remediation_hours }}h
-        {% else %}
-          &mdash;
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Throughput (total done) -->
+  <div class="grid-3">
+    <!-- Issues Remediated -->
     <div class="card">
       <div class="card-label">Issues Remediated</div>
       <div class="card-value text-green" id="card-throughput">{{ metrics.issues.done }}</div>
       <div class="card-sub">of {{ metrics.total_issues }} total</div>
+    </div>
+
+    <!-- Active Sessions -->
+    <div class="card">
+      <div class="card-label">Active Sessions</div>
+      <div class="card-value text-purple" id="card-active">{{ metrics.active_sessions }}</div>
+      <div class="card-sub" id="card-active-breakdown">
+        {% for stype, cnt in metrics.active_sessions_by_type.items() %}
+          {{ stype }}: {{ cnt }}{% if not loop.last %}, {% endif %}
+        {% else %}
+          no active sessions
+        {% endfor %}
+      </div>
     </div>
 
     <!-- Session Success Rate -->
@@ -196,133 +161,20 @@
       </div>
       <div class="card-sub">{{ metrics.completed_sessions }} / {{ metrics.total_sessions }} sessions</div>
     </div>
+  </div>
 
-    <!-- Active Sessions -->
-    <div class="card">
-      <div class="card-label">Active Sessions</div>
-      <div class="card-value text-purple" id="card-active">{{ metrics.active_sessions }}</div>
-      <div class="card-sub">
-        {% for stype, cnt in metrics.active_sessions_by_type.items() %}
-          {{ stype }}: {{ cnt }}{% if not loop.last %}, {% endif %}
-        {% else %}
-          no active sessions
-        {% endfor %}
-      </div>
+  <!-- ================================================================== -->
+  <!-- PIPELINE STATUS                                                     -->
+  <!-- ================================================================== -->
+  <div class="section-title">Pipeline Status</div>
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-pipeline"></canvas>
     </div>
   </div>
 
   <!-- ================================================================== -->
-  <!-- PIPELINE FUNNEL ROW                                                 -->
-  <!-- ================================================================== -->
-  <div class="section-title">Pipeline Health</div>
-  <div class="grid-2">
-    <!-- Issues by Status (horizontal bar chart) -->
-    <div class="card">
-      <div class="card-label">Issues by Status (Pipeline Funnel)</div>
-      <div class="chart-container">
-        <canvas id="chart-pipeline"></canvas>
-      </div>
-    </div>
-
-    <!-- Error Rate -->
-    <div class="card {% if metrics.error_rate > 0 %}bg-red-light{% else %}bg-green-light{% endif %}">
-      <div class="card-label">Error Rate</div>
-      <div class="card-value {% if metrics.error_rate > 0 %}text-red{% else %}text-green{% endif %}" id="card-error-rate">
-        {{ (metrics.error_rate * 100) | round(1) }}%
-      </div>
-      <div class="card-sub">{{ metrics.failed_sessions }} errors out of {{ metrics.total_sessions }} sessions</div>
-      <div class="error-indicator">
-        <div class="error-dot {% if metrics.error_rate > 0 %}warn{% else %}ok{% endif %}"></div>
-        <span>{% if metrics.error_rate > 0 %}Errors detected{% else %}All systems healthy{% endif %}</span>
-      </div>
-      {% if metrics.recent_errors %}
-      <div style="margin-top:0.75rem; font-size:0.8rem;">
-        <strong>Recent errors:</strong>
-        {% for err in metrics.recent_errors[:3] %}
-        <div style="margin-top:0.3rem; color:#721c24;">
-          Issue #{{ err.issue_id }} ({{ err.session_type }}){% if err.error_message %}: {{ err.error_message[:80] }}{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- ================================================================== -->
-  <!-- TRENDS ROW                                                          -->
-  <!-- ================================================================== -->
-  <div class="section-title">Velocity &amp; Efficiency</div>
-  <div class="grid-2">
-    <!-- Open vs. Closed Vulnerability Trend -->
-    <div class="card">
-      <div class="card-label">Open vs. Closed Vulnerability Trend</div>
-      <div class="chart-container">
-        <canvas id="chart-open-closed"></canvas>
-      </div>
-    </div>
-
-    <!-- Throughput over Time -->
-    <div class="card">
-      <div class="card-label">Throughput over Time (Issues Remediated / Day)</div>
-      <div class="chart-container">
-        <canvas id="chart-throughput"></canvas>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================================================================== -->
-  <!-- BREAKDOWN ROW                                                       -->
-  <!-- ================================================================== -->
-  <div class="section-title">Risk Posture</div>
-  <div class="grid-3">
-    <!-- Severity / Category donut -->
-    <div class="card">
-      <div class="card-label">Severity / Category Breakdown</div>
-      <div class="chart-container chart-container-donut">
-        <canvas id="chart-severity"></canvas>
-      </div>
-    </div>
-
-    <!-- TTR by Stage (stacked bar) -->
-    <div class="card">
-      <div class="card-label">Time-to-Remediation by Stage</div>
-      <div class="chart-container">
-        <canvas id="chart-ttr-stages"></canvas>
-      </div>
-    </div>
-
-    <!-- Cost per Fix + MTFR -->
-    <div class="card">
-      <div class="card-label">Efficiency Metrics</div>
-      <div style="display:flex; flex-direction:column; gap:1.25rem; padding-top:0.5rem;">
-        <div>
-          <div class="card-label">Devin Compute Cost / Fix</div>
-          <div class="card-value text-blue" style="font-size:1.6rem;">
-            {% if metrics.cost_per_fix_minutes is not none %}
-              {{ metrics.cost_per_fix_minutes }} min
-            {% else %}
-              &mdash;
-            {% endif %}
-          </div>
-          <div class="card-sub">avg session-minutes per remediated issue</div>
-        </div>
-        <div>
-          <div class="card-label">Mean Time to First Response</div>
-          <div class="card-value text-green" style="font-size:1.6rem;">
-            {% if metrics.mean_time_to_first_response_minutes is not none %}
-              {{ metrics.mean_time_to_first_response_minutes }} min
-            {% else %}
-              &mdash;
-            {% endif %}
-          </div>
-          <div class="card-sub">from issue creation to first Devin session</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================================================================== -->
-  <!-- ACTIVITY FEED                                                       -->
+  <!-- RECENT ACTIVITY                                                     -->
   <!-- ================================================================== -->
   <div class="section-title">Recent Activity</div>
   <div class="card" style="overflow-x:auto;">
@@ -379,13 +231,11 @@
   </div><!-- end #dashboard-content -->
 
   <!-- ================================================================== -->
-  <!-- CHARTS INITIALISATION                                               -->
+  <!-- CHART INITIALISATION                                                -->
   <!-- ================================================================== -->
   <script>
-    // Metrics injected from Jinja on first load
     let metrics = {{ metrics | tojson }};
 
-    // Colour palette
     const COLORS = {
       backlog:   '#adb5bd',
       planning:  '#ffc107',
@@ -394,18 +244,15 @@
       done:      '#2ec4b6',
       error:     '#e63946',
     };
-    const SEVERITY_COLORS = ['#e63946','#4361ee','#2ec4b6','#e9c46a','#7209b7','#f77f00'];
 
-    // Chart.js global defaults
     Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
     Chart.defaults.font.size = 12;
     Chart.defaults.plugins.legend.labels.usePointStyle = true;
-    Chart.defaults.plugins.legend.labels.pointStyleWidth = 8;
     Chart.defaults.animation.duration = 600;
 
-    // ---- 1. Pipeline Funnel (horizontal bar) ----
-    const pipelineCtx = document.getElementById('chart-pipeline').getContext('2d');
+    // Pipeline funnel (horizontal bar)
     const pipelineLabels = ['backlog','planning','building','reviewing','done','error'];
+    const pipelineCtx = document.getElementById('chart-pipeline').getContext('2d');
     const pipelineChart = new Chart(pipelineCtx, {
       type: 'bar',
       data: {
@@ -429,151 +276,21 @@
       }
     });
 
-    // ---- 2. Open vs. Closed Trend (dual line) ----
-    function buildCumulativeData(openTrend, closedTrend) {
-      const allDates = new Set();
-      openTrend.forEach(d => allDates.add(d.date));
-      closedTrend.forEach(d => allDates.add(d.date));
-      const dates = [...allDates].sort();
-      const openMap = Object.fromEntries(openTrend.map(d => [d.date, d.count]));
-      const closedMap = Object.fromEntries(closedTrend.map(d => [d.date, d.count]));
-      let cumOpen = 0, cumClosed = 0;
-      const openData = [], closedData = [];
-      dates.forEach(d => {
-        cumOpen += (openMap[d] || 0);
-        cumClosed += (closedMap[d] || 0);
-        openData.push(cumOpen);
-        closedData.push(cumClosed);
-      });
-      return { dates, openData, closedData };
-    }
-    const trend = buildCumulativeData(metrics.open_trend, metrics.closed_trend);
-    const openClosedCtx = document.getElementById('chart-open-closed').getContext('2d');
-    const openClosedChart = new Chart(openClosedCtx, {
-      type: 'line',
-      data: {
-        labels: trend.dates,
-        datasets: [
-          { label: 'Opened (cumulative)', data: trend.openData, borderColor: '#e63946', backgroundColor: 'rgba(230,57,70,0.1)', fill: true, tension: 0.3, pointRadius: 3 },
-          { label: 'Closed (cumulative)', data: trend.closedData, borderColor: '#2ec4b6', backgroundColor: 'rgba(46,196,182,0.1)', fill: true, tension: 0.3, pointRadius: 3 }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom' } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
-      }
-    });
-
-    // ---- 3. Throughput over Time (line) ----
-    const throughputCtx = document.getElementById('chart-throughput').getContext('2d');
-    const throughputChart = new Chart(throughputCtx, {
-      type: 'line',
-      data: {
-        labels: metrics.throughput_by_day.map(d => d.date),
-        datasets: [{
-          label: 'Issues Done',
-          data: metrics.throughput_by_day.map(d => d.count),
-          borderColor: '#4361ee', backgroundColor: 'rgba(67,97,238,0.15)',
-          fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: '#4361ee'
-        }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
-      }
-    });
-
-    // ---- 4. Severity / Category Donut ----
-    const sevLabels = Object.keys(metrics.severity_breakdown);
-    const sevData = Object.values(metrics.severity_breakdown);
-    const severityCtx = document.getElementById('chart-severity').getContext('2d');
-    const severityChart = new Chart(severityCtx, {
-      type: 'doughnut',
-      data: {
-        labels: sevLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
-        datasets: [{
-          data: sevData,
-          backgroundColor: SEVERITY_COLORS.slice(0, sevLabels.length),
-          borderWidth: 2, borderColor: '#fff'
-        }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: true,
-        cutout: '60%',
-        plugins: { legend: { position: 'bottom' } }
-      }
-    });
-
-    // ---- 5. TTR by Stage (stacked bar per issue) ----
-    const ttrLabels = metrics.ttr_per_issue.map(t => '#' + t.issue_id);
-    const ttrStagesCtx = document.getElementById('chart-ttr-stages').getContext('2d');
-    const ttrStagesChart = new Chart(ttrStagesCtx, {
-      type: 'bar',
-      data: {
-        labels: ttrLabels,
-        datasets: [
-          { label: 'Planning', data: metrics.ttr_per_issue.map(t => t.planning_hours || 0), backgroundColor: '#ffc107', borderRadius: 2 },
-          { label: 'Building', data: metrics.ttr_per_issue.map(t => t.building_hours || 0), backgroundColor: '#0d6efd', borderRadius: 2 },
-          { label: 'Reviewing', data: metrics.ttr_per_issue.map(t => t.reviewing_hours || 0), backgroundColor: '#7209b7', borderRadius: 2 }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom' } },
-        scales: {
-          x: { stacked: true, grid: { display: false } },
-          y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Hours' } }
-        }
-      }
-    });
-
-    // ---- Auto-refresh via htmx: update charts when new data arrives ----
+    // Auto-refresh handler
     window.__refreshCharts = function(evt) {
       try {
-        const newMetrics = JSON.parse(evt.detail.xhr.responseText);
-        metrics = newMetrics;
+        const m = JSON.parse(evt.detail.xhr.responseText);
+        metrics = m;
 
         // Update summary cards
-        const ttrEl = document.getElementById('card-ttr');
-        if (ttrEl) ttrEl.textContent = metrics.median_time_to_remediation_hours != null ? metrics.median_time_to_remediation_hours + 'h' : '\u2014';
-        const throughputEl = document.getElementById('card-throughput');
-        if (throughputEl) throughputEl.textContent = metrics.issues.done;
+        document.getElementById('card-throughput').textContent = m.issues.done;
+        document.getElementById('card-active').textContent = m.active_sessions;
         const successEl = document.getElementById('card-success');
-        if (successEl) successEl.textContent = (metrics.session_success_rate * 100).toFixed(1) + '%';
-        const activeEl = document.getElementById('card-active');
-        if (activeEl) activeEl.textContent = metrics.active_sessions;
-        const errorEl = document.getElementById('card-error-rate');
-        if (errorEl) errorEl.textContent = (metrics.error_rate * 100).toFixed(1) + '%';
+        if (successEl) successEl.textContent = (m.session_success_rate * 100).toFixed(1) + '%';
 
-        // Update charts
-        const pl = ['backlog','planning','building','reviewing','done','error'];
-        pipelineChart.data.datasets[0].data = pl.map(l => metrics.issues[l] || 0);
+        // Update pipeline chart
+        pipelineChart.data.datasets[0].data = pipelineLabels.map(l => m.issues[l] || 0);
         pipelineChart.update('none');
-
-        const t2 = buildCumulativeData(metrics.open_trend, metrics.closed_trend);
-        openClosedChart.data.labels = t2.dates;
-        openClosedChart.data.datasets[0].data = t2.openData;
-        openClosedChart.data.datasets[1].data = t2.closedData;
-        openClosedChart.update('none');
-
-        throughputChart.data.labels = metrics.throughput_by_day.map(d => d.date);
-        throughputChart.data.datasets[0].data = metrics.throughput_by_day.map(d => d.count);
-        throughputChart.update('none');
-
-        const newSevLabels = Object.keys(metrics.severity_breakdown);
-        const newSevData = Object.values(metrics.severity_breakdown);
-        severityChart.data.labels = newSevLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1));
-        severityChart.data.datasets[0].data = newSevData;
-        severityChart.update('none');
-
-        const newTtrLabels = metrics.ttr_per_issue.map(t => '#' + t.issue_id);
-        ttrStagesChart.data.labels = newTtrLabels;
-        ttrStagesChart.data.datasets[0].data = metrics.ttr_per_issue.map(t => t.planning_hours || 0);
-        ttrStagesChart.data.datasets[1].data = metrics.ttr_per_issue.map(t => t.building_hours || 0);
-        ttrStagesChart.data.datasets[2].data = metrics.ttr_per_issue.map(t => t.reviewing_hours || 0);
-        ttrStagesChart.update('none');
 
         // Update timestamp
         document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
@@ -583,7 +300,7 @@
         bar.classList.remove('active');
         void bar.offsetWidth;
         bar.classList.add('active');
-        setTimeout(() => bar.classList.remove('active'), 1200);
+        setTimeout(function() { bar.classList.remove('active'); }, 1200);
       } catch (e) {
         console.error('Refresh error:', e);
       }

@@ -272,6 +272,51 @@ class TestCheckActiveSessions:
         logs = await db.list_session_logs(issue_id=10)
         assert logs[0]["status"] == "completed"
 
+    async def test_superseded_session_marked_completed(self):
+        """A planner session that is still 'running' in the Devin API but whose
+        issue has already moved to 'building' should be marked completed."""
+        await db.upsert_issue(11, issue_node_id="I_11", status="building")
+        await db.insert_session_log(11, "sess-11", "planner")
+
+        mock_devin = AsyncMock()
+        mock_devin.get_session.return_value = {
+            "session_id": "sess-11",
+            "status": "running",
+            "status_detail": "blocked",
+            "pull_requests": [],
+        }
+        mock_github = AsyncMock()
+
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
+
+        assert len(updates) == 1
+        assert updates[0]["session_id"] == "sess-11"
+        assert updates[0]["final_status"] == "completed"
+
+        logs = await db.list_session_logs(issue_id=11)
+        assert logs[0]["status"] == "completed"
+
+    async def test_non_superseded_session_stays_running(self):
+        """A planner session whose issue is still at 'planning' should NOT
+        be marked completed even if the Devin API says 'blocked'."""
+        await db.upsert_issue(12, issue_node_id="I_12", status="planning")
+        await db.insert_session_log(12, "sess-12", "planner")
+
+        mock_devin = AsyncMock()
+        mock_devin.get_session.return_value = {
+            "session_id": "sess-12",
+            "status": "running",
+            "status_detail": "blocked",
+            "pull_requests": [],
+        }
+        mock_github = AsyncMock()
+
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
+
+        assert len(updates) == 0
+        logs = await db.list_session_logs(issue_id=12)
+        assert logs[0]["status"] == "running"
+
 
 class TestBuildStatusComment:
     def test_completed_planner(self):
