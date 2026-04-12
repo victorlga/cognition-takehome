@@ -285,13 +285,15 @@ The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engi
 
 All secrets are provided via environment variables. **Never hardcode.**
 
-| Variable | Purpose | Where Used |
-|---|---|---|
-| `DEVIN_API_KEY` | Devin API v3 service user key (`cog_...`) | Orchestrator → Devin API |
-| `DEVIN_ORG_ID` | Devin organization ID | Orchestrator → Devin API |
-| `GITHUB_TOKEN` | GitHub PAT with `repo`, `project`, `admin:org` scopes | Orchestrator → GitHub API, `gh` CLI |
-| `GITHUB_WEBHOOK_SECRET` | HMAC secret for webhook signature verification | Orchestrator webhook endpoint |
-| `NGROK_AUTH_TOKEN` | (dev only) ngrok tunnel authentication | Local development |
+| Variable | Purpose | How to Provision | Where Used |
+|---|---|---|---|
+| `DEVIN_API_KEY` | Devin API v3 token (from a **service user**, not the legacy API keys page) | [app.devin.ai](https://app.devin.ai) → Team Settings → Service Users → create a service user with Admin access → copy its API token | Orchestrator → Devin API |
+| `DEVIN_ORG_ID` | Devin organization ID | Shown on the service user page or in any Devin API response | Orchestrator → Devin API |
+| `GITHUB_TOKEN` | GitHub PAT with `repo`, `project`, `admin:org` scopes | GitHub → Settings → Developer Settings → PAT (fine-grained) | Orchestrator → GitHub API, `gh` CLI |
+| `GITHUB_WEBHOOK_SECRET` | HMAC secret for webhook signature verification | Self-generated: `openssl rand -hex 20` | Orchestrator webhook endpoint |
+| `NGROK_AUTH_TOKEN` | (dev only) ngrok tunnel authentication | [dashboard.ngrok.com](https://dashboard.ngrok.com/get-started/your-authtoken) | Local development |
+
+> **Note:** The legacy "API Keys" page on Devin is deprecated. Use **Service Users** instead. A service user named `takehome` with Admin access has already been created for this project.
 
 ---
 
