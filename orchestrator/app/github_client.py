@@ -97,11 +97,15 @@ class GitHubClient:
         }
         """
         client = await self._get_client()
-        resp = await client.post(
-            GITHUB_GRAPHQL,
-            json={"query": query, "variables": {"nodeId": node_id}},
-        )
-        resp.raise_for_status()
+        try:
+            resp = await client.post(
+                GITHUB_GRAPHQL,
+                json={"query": query, "variables": {"nodeId": node_id}},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            logger.exception("GraphQL request failed for node %s", node_id)
+            return None
         data = resp.json()
         node = data.get("data", {}).get("node")
         if node and node.get("number"):
