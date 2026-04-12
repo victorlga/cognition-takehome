@@ -25,7 +25,7 @@ Build an **event-driven vulnerability remediation system** that uses the **Devin
 
 | Phase | Name | Depends On | Parallelizable? | Estimated Devin Time | Key Output |
 |-------|------|------------|-----------------|---------------------|------------|
-| 0 | Planning & Scaffolding | — | N/A (this session) | 1 session | Docs, playbook, machine, wikis |
+| 0 | Planning & Scaffolding | — | N/A (this session) | 1 session | Docs, playbook, machine config |
 | 1 | Issue Selection & Seeding | Phase 0 | No | 1 session | 3–5 issues on fork, kanban board |
 | 2 | Orchestrator Backend | Phase 0 | Yes (parallel w/ Phase 1) | 1–2 sessions | Working FastAPI app in Docker |
 | 3 | Issue Remediation | Phase 1 + Phase 2 | Yes (sub-phases per issue) | 3–5 sessions | PRs with fixes on fork |
@@ -51,7 +51,7 @@ graph LR
 
 ### Phase 0 — Planning & Scaffolding *(this session)*
 
-**Goal:** Produce all planning docs, the Devin Playbook, the Devin Machine config, and GitHub wikis. No product code.
+**Goal:** Produce all planning docs, the Devin Playbook, and the Devin Machine config. No product code.
 
 **Deliverables:**
 - `docs/TAKEHOME.md` (already committed)
@@ -61,9 +61,8 @@ graph LR
 - `CHANGELOG.md` (initialized with contract)
 - Devin Playbook: `cognition-takehome-prompting-playbook`
 - Devin Machine configured for both repos
-- GitHub wikis on both repos
 
-**Definition of Done:** PR merged to `cognition-takehome/main`. All docs committed. Playbook and machine verified. Wikis populated.
+**Definition of Done:** PR merged to `cognition-takehome/main`. All docs committed. Playbook and machine verified.
 
 ---
 

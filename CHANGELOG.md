@@ -28,7 +28,7 @@
 
 ---
 
-## [PHASE_0] — 2026-04-12 — Bootstrap planning docs, playbook, machine, and wikis
+## [PHASE_0] — 2026-04-12 — Bootstrap planning docs, playbook, and machine
 
 **What changed:**
 - Created `docs/TAKEHOME.md` (verbatim from recruiter email)
@@ -38,7 +38,6 @@
 - Created `CHANGELOG.md` (this file, with contract documented)
 - Created Devin Playbook `cognition-takehome-prompting-playbook` via native Devin Playbook feature
 - Configured Devin Machine with both repos and required tooling
-- Created and populated GitHub wikis on both `victorlga/cognition-takehome` and `victorlga/superset`
 
 **Files touched:**
 - `docs/TAKEHOME.md` (already existed)
@@ -55,8 +54,7 @@
 **How it was verified:**
 - All docs reviewed for completeness and cross-references
 - Devin Machine smoke test: `gh auth status`, `pip-audit --version`, `semgrep --version`, `docker --version` all pass
-- GitHub wikis confirmed accessible on both repos
-- Playbook created and visible in Devin UI
+- Playbook created and visible in Devin UI (ID: `playbook-77e36f049a66446c821245596544412a`)
 
 **What the next phase needs to know:**
 - GitHub Projects v2 webhooks ARE supported — `projects_v2_item.edited` fires on status field changes. Primary trigger confirmed feasible.
