@@ -27,8 +27,9 @@ async def dashboard_page(request: Request) -> HTMLResponse:
     """Render the full observability dashboard."""
     metrics = await get_metrics()
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
-        {"request": request, "metrics": metrics},
+        context={"metrics": metrics},
     )
 
 
