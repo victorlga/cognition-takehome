@@ -58,6 +58,10 @@ flowchart TB
     Tracker -- "poll active sessions" --> DevinClient
     DevinClient -- "GET /sessions/{id}" --> DevinCloud
     Tracker -- "update status,\nextract PR URLs,\npropagate errors" --> DB
+    Tracker -- "post audit-trail\ncomments" --> Issues
+
+    %% Feedback loop (label sync)
+    SM -- "set_state_label()" --> Issues
 
     %% Periodic scan
     Scheduler -- "cron: daily" --> ScannerSession
@@ -255,6 +259,7 @@ The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engi
 - Rendered via Jinja2 templates with Chart.js for visualizations
 - Auto-refreshes via htmx polling every 30 seconds
 - JSON API at `/api/metrics` for programmatic access
+- JSON API at `/api/issues` for listing all tracked issues
 - Dashboard layout: 4 summary cards at top (TTR, throughput, success rate, active sessions), two chart rows (pipeline funnel + trend lines), activity feed at bottom
 
 ---
@@ -326,3 +331,4 @@ cognition-takehome/
 | 6 | **htmx dashboard** over React SPA | React, Streamlit, Grafana | Zero build step. Serves from the same FastAPI process. htmx gives reactivity without JS complexity. |
 | 7 | **Scheduled Devin** for periodic scans | Cron in orchestrator | Demonstrates another Devin API capability (scheduled sessions). Enriches the event-driven narrative. |
 | 8 | **Docker Compose** for deployment | Kubernetes, bare metal | Required by take-home spec. Simple, portable, reproducible. |
+| 9 | **Bidirectional GitHub sync** for label + comment feedback | Fire-and-forget, manual label management | `set_state_label()` in the state machine and `post_issue_comment()` in the session tracker close the feedback loop. The issue thread becomes the audit trail. Label sync makes the system self-driving — no human needs to manually update labels after the initial trigger. |

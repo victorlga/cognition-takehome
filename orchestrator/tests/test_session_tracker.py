@@ -8,6 +8,7 @@ import pytest
 
 from app import db
 from app.session_tracker import (
+    _build_status_comment,
     _compute_duration,
     _extract_pr_url,
     _final_status_label,
@@ -78,7 +79,8 @@ class TestComputeDuration:
 class TestCheckActiveSessions:
     async def test_no_active_sessions_returns_empty(self):
         mock_devin = AsyncMock()
-        result = await check_active_sessions(devin=mock_devin)
+        mock_github = AsyncMock()
+        result = await check_active_sessions(devin=mock_devin, github=mock_github)
         assert result == []
         mock_devin.get_session.assert_not_called()
 
@@ -94,8 +96,9 @@ class TestCheckActiveSessions:
             "status_detail": "finished",
             "pull_requests": [],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 1
         assert updates[0]["session_id"] == "sess-1"
@@ -105,6 +108,7 @@ class TestCheckActiveSessions:
         assert logs[0]["status"] == "completed"
         assert logs[0]["finished_at"] is not None
         assert logs[0]["duration_seconds"] >= 0
+        mock_github.post_issue_comment.assert_called_once()
 
     async def test_extracts_pr_url_from_builder_session(self):
         """A completed builder session with PRs should update issue_state.pr_url."""
@@ -120,8 +124,9 @@ class TestCheckActiveSessions:
                 {"pr_url": "https://github.com/org/repo/pull/5", "pr_state": "open"}
             ],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 1
         assert updates[0]["pr_url"] == "https://github.com/org/repo/pull/5"
@@ -143,8 +148,9 @@ class TestCheckActiveSessions:
                 {"pr_url": "https://github.com/org/repo/pull/99", "pr_state": "open"}
             ],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 1
         assert "pr_url" not in updates[0]
@@ -161,8 +167,9 @@ class TestCheckActiveSessions:
             "status_detail": "error",
             "pull_requests": [],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 1
         assert updates[0]["final_status"] == "failed"
@@ -183,13 +190,15 @@ class TestCheckActiveSessions:
             "status_detail": "working",
             "pull_requests": [],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 0
 
         logs = await db.list_session_logs(issue_id=5)
         assert logs[0]["status"] == "running"
+        mock_github.post_issue_comment.assert_not_called()
 
     async def test_handles_api_failure_gracefully(self):
         """If the Devin API call fails for one session, others are still processed."""
@@ -211,8 +220,9 @@ class TestCheckActiveSessions:
             }
 
         mock_devin.get_session.side_effect = side_effect
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         # sess-6 failed to poll, sess-7 was updated
         assert len(updates) == 1
@@ -232,8 +242,70 @@ class TestCheckActiveSessions:
             "status_detail": "",
             "pull_requests": [],
         }
+        mock_github = AsyncMock()
 
-        updates = await check_active_sessions(devin=mock_devin)
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
 
         assert len(updates) == 2
         assert mock_devin.get_session.call_count == 2
+        assert mock_github.post_issue_comment.call_count == 2
+
+    async def test_comment_failure_does_not_break_tracking(self):
+        """If posting a comment fails, the session is still tracked."""
+        await db.upsert_issue(10, issue_node_id="I_10", status="planning")
+        await db.insert_session_log(10, "sess-10", "planner")
+
+        mock_devin = AsyncMock()
+        mock_devin.get_session.return_value = {
+            "session_id": "sess-10",
+            "status": "running",
+            "status_detail": "finished",
+            "pull_requests": [],
+        }
+        mock_github = AsyncMock()
+        mock_github.post_issue_comment.side_effect = Exception("GitHub down")
+
+        updates = await check_active_sessions(devin=mock_devin, github=mock_github)
+
+        assert len(updates) == 1
+        assert updates[0]["final_status"] == "completed"
+        logs = await db.list_session_logs(issue_id=10)
+        assert logs[0]["status"] == "completed"
+
+
+class TestBuildStatusComment:
+    def test_completed_planner(self):
+        update = {
+            "session_id": "sess-1",
+            "session_type": "planner",
+            "final_status": "completed",
+            "duration_seconds": 180,
+        }
+        comment = _build_status_comment(update)
+        assert "Planner" in comment
+        assert "completed" in comment
+        assert "3m" in comment
+
+    def test_completed_builder_with_pr(self):
+        update = {
+            "session_id": "sess-2",
+            "session_type": "builder",
+            "final_status": "completed",
+            "duration_seconds": 300,
+            "pr_url": "https://github.com/org/repo/pull/5",
+        }
+        comment = _build_status_comment(update)
+        assert "Builder" in comment
+        assert "https://github.com/org/repo/pull/5" in comment
+
+    def test_failed_session(self):
+        update = {
+            "session_id": "sess-3",
+            "session_type": "builder",
+            "final_status": "failed",
+            "duration_seconds": 60,
+            "api_status": "error",
+        }
+        comment = _build_status_comment(update)
+        assert "failed" in comment
+        assert "`error`" in comment

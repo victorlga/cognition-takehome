@@ -10,6 +10,8 @@ finished.  When a session reaches a terminal or settled state the tracker:
    PR URL on ``issue_state.pr_url``.
 3. For sessions that ended in error, propagates the error to
    ``issue_state.error_message``.
+4. Posts a summary comment on the corresponding GitHub issue so that
+   the issue thread serves as an audit trail.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Any
 from app import db
 from app.config import settings
 from app.devin_client import DevinClient, TERMINAL_STATUSES, SETTLED_DETAIL
+from app.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +63,33 @@ def _final_status_label(status: str, status_detail: str) -> str:
     return "running"
 
 
+def _build_status_comment(update: dict[str, Any]) -> str:
+    """Build a Markdown comment summarising a session's final state."""
+    session_type = update["session_type"]
+    final_status = update["final_status"]
+    duration = update.get("duration_seconds", 0)
+    session_id = update["session_id"]
+
+    minutes = duration // 60
+    emoji = "\u2705" if final_status == "completed" else "\u274c"
+    header = f"{emoji} **{session_type.capitalize()}** session `{session_id}` — **{final_status}** ({minutes}m)"
+
+    lines = [header]
+
+    pr_url = update.get("pr_url")
+    if pr_url:
+        lines.append(f"\nPull request: {pr_url}")
+
+    if final_status == "failed":
+        api_status = update.get("api_status", "unknown")
+        lines.append(f"\nDevin API status: `{api_status}`")
+
+    return "\n".join(lines)
+
+
 async def check_active_sessions(
     devin: DevinClient | None = None,
+    github: GitHubClient | None = None,
 ) -> list[dict[str, Any]]:
     """Poll every 'running' session in session_log against the Devin API.
 
@@ -71,11 +99,13 @@ async def check_active_sessions(
     * If it was a **builder** session, extract the PR URL and store it on
       the parent ``issue_state`` row.
     * If the session errored, write the error to ``issue_state``.
+    * Post an audit-trail comment on the GitHub issue.
 
     Returns a list of dicts summarising each update made (useful for
     logging and testing).
     """
     devin = devin or DevinClient()
+    github = github or GitHubClient()
     active = await db.list_active_sessions()
 
     if not active:
@@ -142,6 +172,15 @@ async def check_active_sessions(
                 session_id,
                 api_status,
                 issue_id,
+            )
+
+        # Post an audit-trail comment on the GitHub issue.
+        comment = _build_status_comment(update)
+        try:
+            await github.post_issue_comment(issue_id, comment)
+        except Exception:
+            logger.exception(
+                "Tracker: failed to post comment on issue #%d", issue_id
             )
 
         updates.append(update)

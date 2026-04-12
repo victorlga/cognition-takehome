@@ -92,6 +92,24 @@ class DevinClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def send_message(self, session_id: str, message: str) -> dict[str, Any]:
+        """POST /v3/organizations/{org_id}/sessions/{session_id}/messages"""
+        client = await self._get_client()
+        resp = await client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": message},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """GET /v3/organizations/{org_id}/sessions/{session_id}/messages"""
+        client = await self._get_client()
+        resp = await client.get(f"/sessions/{session_id}/messages")
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else data.get("messages", [])
+
     async def poll_until_complete(
         self,
         session_id: str,

@@ -40,6 +40,77 @@ class GitHubClient:
 
     # -- REST helpers --------------------------------------------------------
 
+    async def get_issue(self, issue_number: int) -> dict[str, Any]:
+        """GET /repos/{owner}/{repo}/issues/{issue_number}"""
+        client = await self._get_client()
+        resp = await client.get(f"{GITHUB_API}/repos/{self.repo}/issues/{issue_number}")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def post_issue_comment(self, issue_number: int, body: str) -> dict[str, Any]:
+        """POST /repos/{owner}/{repo}/issues/{issue_number}/comments"""
+        client = await self._get_client()
+        resp = await client.post(
+            f"{GITHUB_API}/repos/{self.repo}/issues/{issue_number}/comments",
+            json={"body": body},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def add_labels(self, issue_number: int, labels: list[str]) -> None:
+        """Add labels to an issue, creating them first if needed."""
+        client = await self._get_client()
+        for label in labels:
+            # Ensure the label exists on the repo
+            resp = await client.get(
+                f"{GITHUB_API}/repos/{self.repo}/labels/{label}"
+            )
+            if resp.status_code == 404:
+                await client.post(
+                    f"{GITHUB_API}/repos/{self.repo}/labels",
+                    json={"name": label, "color": "ededed"},
+                )
+        # Now add to issue
+        await client.post(
+            f"{GITHUB_API}/repos/{self.repo}/issues/{issue_number}/labels",
+            json={"labels": labels},
+        )
+
+    async def remove_label(self, issue_number: int, label: str) -> None:
+        """Remove a single label from an issue (ignores 404 if absent)."""
+        client = await self._get_client()
+        resp = await client.delete(
+            f"{GITHUB_API}/repos/{self.repo}/issues/{issue_number}/labels/{label}"
+        )
+        if resp.status_code not in (200, 404):
+            resp.raise_for_status()
+
+    async def set_state_label(self, issue_number: int, new_state: str) -> None:
+        """Ensure only one ``state:*`` label is present on the issue.
+
+        Removes any existing ``state:*`` labels, then adds
+        ``state:{new_state}``.  This keeps the issue labels consistent with
+        the orchestrator's internal state.
+        """
+        state_prefix = "state:"
+        target_label = f"{state_prefix}{new_state}"
+
+        client = await self._get_client()
+        resp = await client.get(
+            f"{GITHUB_API}/repos/{self.repo}/issues/{issue_number}/labels"
+        )
+        resp.raise_for_status()
+        current_labels: list[dict] = resp.json()
+
+        # Remove stale state labels
+        for lbl in current_labels:
+            name: str = lbl.get("name", "")
+            if name.lower().startswith(state_prefix) and name.lower() != target_label.lower():
+                await self.remove_label(issue_number, name)
+
+        # Add the target label (idempotent — GitHub ignores duplicates)
+        await self.add_labels(issue_number, [target_label])
+
     async def list_issues_with_labels(
         self, labels: list[str], state: str = "open",
     ) -> list[dict[str, Any]]:

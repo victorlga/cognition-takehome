@@ -3,6 +3,7 @@
 Serves:
 - GET /dashboard        — Jinja2 + htmx + Chart.js observability dashboard
 - GET /api/metrics      — JSON metrics for programmatic access
+- GET /api/issues       — JSON list of all tracked issues
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from app.db import get_metrics
+from app.db import get_metrics, list_issues
 
 router = APIRouter()
 
@@ -37,4 +38,11 @@ async def dashboard_page(request: Request) -> HTMLResponse:
 async def metrics_api() -> JSONResponse:
     """Return aggregate metrics as JSON."""
     data = await get_metrics()
+    return JSONResponse(content=data)
+
+
+@router.get("/api/issues")
+async def issues_api() -> JSONResponse:
+    """Return all tracked issues as JSON."""
+    data = await list_issues()
     return JSONResponse(content=data)

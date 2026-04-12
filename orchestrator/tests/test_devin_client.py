@@ -105,6 +105,51 @@ class TestGetSession:
         assert result["status_detail"] == "finished"
 
 
+class TestSendMessage:
+    @pytest.mark.asyncio
+    async def test_sends_message(self, client):
+        mock_response = httpx.Response(
+            200,
+            json={"status": "running"},
+            request=httpx.Request("POST", f"{_EFFECTIVE_BASE}/sessions/s/messages"),
+        )
+
+        with patch.object(httpx.AsyncClient, "post", return_value=mock_response):
+            result = await client.send_message("sess-123", "Hello")
+
+        assert result["status"] == "running"
+
+
+class TestGetMessages:
+    @pytest.mark.asyncio
+    async def test_returns_messages_list(self, client):
+        messages = [{"role": "user", "content": "hello"}]
+        mock_response = httpx.Response(
+            200,
+            json=messages,
+            request=httpx.Request("GET", f"{_EFFECTIVE_BASE}/sessions/s/messages"),
+        )
+
+        with patch.object(httpx.AsyncClient, "get", return_value=mock_response):
+            result = await client.get_messages("sess-123")
+
+        assert result == messages
+
+    @pytest.mark.asyncio
+    async def test_returns_messages_from_dict(self, client):
+        messages = [{"role": "assistant", "content": "hi"}]
+        mock_response = httpx.Response(
+            200,
+            json={"messages": messages},
+            request=httpx.Request("GET", f"{_EFFECTIVE_BASE}/sessions/s/messages"),
+        )
+
+        with patch.object(httpx.AsyncClient, "get", return_value=mock_response):
+            result = await client.get_messages("sess-123")
+
+        assert result == messages
+
+
 class TestPollUntilComplete:
     @pytest.mark.asyncio
     async def test_returns_on_terminal_status_exit(self, client):

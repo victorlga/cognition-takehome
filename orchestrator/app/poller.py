@@ -124,6 +124,7 @@ async def poll_once(
             issue_url=issue.get("html_url", ""),
             issue_node_id=issue.get("node_id", ""),
             devin=devin,
+            github=github,
         )
         actions.append(result)
 
