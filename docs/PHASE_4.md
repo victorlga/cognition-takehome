@@ -46,16 +46,39 @@ Build the lightweight observability dashboard that answers the VP-of-Engineering
 
 ### Step 1: Define Metrics
 
-Implement these metrics (queries against the SQLite database):
+Organize metrics into four groups that answer what a VP of Engineering cares about.
+See `docs/ARCHITECTURE.md` "Observability" section for the full rationale.
+
+**Pipeline Health ("Is the system working right now?")**
 
 | Metric | Query Logic | Visualization |
 |--------|------------|---------------|
-| **Active Devin Sessions** | COUNT from `session_log` WHERE status = 'running' | Big number card |
-| **Issues by Status** | GROUP BY status from `issue_state` | Horizontal bar chart |
-| **Time-to-Remediation** | AVG(done_at - created_at) from `issue_state` WHERE status = 'done' | Big number (hours) |
+| **Active Devin Sessions** | COUNT from `session_log` WHERE status = 'running', GROUP BY session_type | Big number card with type breakdown |
+| **Issues by Status** | GROUP BY status from `issue_state` | Horizontal bar chart (pipeline funnel) |
+| **Error Rate** | COUNT(error) / COUNT(total) from `session_log` + latest error messages | Percentage card, red if > 0 |
+
+**Velocity & Efficiency ("Is this worth the investment?")**
+
+| Metric | Query Logic | Visualization |
+|--------|------------|---------------|
+| **Time-to-Remediation (TTR)** | Median and p90 of (done_at - planning_started_at) from `issue_state` WHERE status = 'done'. Also compute per-stage breakdown (planning, building, reviewing). | Big number (median hours) + stacked bar per issue |
+| **Throughput** | COUNT from `issue_state` WHERE status = 'done' grouped by date | Line chart with trend |
 | **Session Success Rate** | COUNT(completed) / COUNT(total) from `session_log` | Percentage + donut chart |
-| **Throughput** | COUNT from `issue_state` WHERE status = 'done' grouped by date | Line chart |
-| **Recent Activity** | Latest 20 entries from `session_log` ORDER BY started_at DESC | Activity feed table |
+| **Devin Compute Cost per Fix** | SUM(duration_seconds) / COUNT(DISTINCT issue_id) from `session_log` WHERE status = 'completed' | Big number (minutes per fix) |
+
+**Risk Posture ("Are we safer than yesterday?")**
+
+| Metric | Query Logic | Visualization |
+|--------|------------|---------------|
+| **Open vs. Closed Trend** | Cumulative COUNT of issues created vs. issues done, by date | Dual line chart (gap should shrink) |
+| **Severity Breakdown** | GROUP BY category from `issue_state` | Donut chart (security / bug / dependency / SAST) |
+| **Mean Time to First Response** | AVG(first_session_started_at - created_at) from `issue_state` | Big number (minutes) |
+
+**Recent Activity ("What just happened?")**
+
+| Metric | Query Logic | Visualization |
+|--------|------------|---------------|
+| **Activity Feed** | Latest 20 entries from `session_log` ORDER BY started_at DESC, joined with issue_state for titles/PR links | Scrollable table with status badges |
 
 ### Step 2: Implement `/api/metrics`
 
@@ -95,9 +118,11 @@ Update the stub from Phase 2 to return real data:
 Create `orchestrator/templates/dashboard.html`:
 
 - **Header**: "Vulnerability Remediation System — Dashboard"
-- **Summary Cards Row**: Active Sessions, Issues Remediated, Success Rate, Median TTR
-- **Charts Row**: Issues by Status (bar), Throughput over Time (line)
-- **Activity Feed**: Recent session activity table with status badges
+- **Summary Cards Row** (4 cards): Median TTR, Throughput (this week), Session Success Rate, Active Sessions
+- **Pipeline Funnel Row**: Issues by Status (horizontal bar) + Error Rate indicator
+- **Trends Row**: Open vs. Closed Vulnerability Trend (dual line) + Throughput over Time (line with trend)
+- **Breakdown Row**: Severity/Category donut + TTR by stage stacked bar + Cost per Fix
+- **Activity Feed**: Recent session activity table with status badges, links to PRs/issues
 - **Auto-refresh**: htmx polls `/api/metrics` every 30 seconds and updates the page
 
 Design notes:
@@ -173,9 +198,10 @@ asyncio.run(seed())
 ## Definition of Done
 
 - Dashboard renders at `/dashboard` with real or sample data
-- All 6 metrics are displayed
+- All 4 metric groups displayed: Pipeline Health, Velocity & Efficiency, Risk Posture, Activity Feed
 - Auto-refresh works
-- JSON API at `/api/metrics` returns structured data
+- JSON API at `/api/metrics` returns structured data covering all metric groups
+- Dashboard looks polished enough to show a VP of Engineering in a Loom
 - Screenshot captured for Loom prep
 
 ---
@@ -186,8 +212,10 @@ asyncio.run(seed())
 ## [PHASE_4] — YYYY-MM-DD — Observability dashboard with metrics and activity feed
 
 **What changed:**
-- Implemented full dashboard at /dashboard with 6 metrics
-- Charts: issues by status (bar), throughput (line), success rate (donut)
+- Implemented full dashboard at /dashboard with 4 metric groups
+- Pipeline Health: active sessions, issues by status funnel, error rate
+- Velocity: TTR (median + p90 + per-stage), throughput trend, success rate, cost per fix
+- Risk Posture: open vs. closed trend, severity breakdown, MTFR
 - Activity feed with recent Devin sessions
 - Auto-refresh via htmx (30s polling)
 - JSON API at /api/metrics

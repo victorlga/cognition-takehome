@@ -152,6 +152,8 @@ CREATE TABLE issue_state (
     issue_id        INTEGER PRIMARY KEY,  -- GitHub issue number
     issue_node_id   TEXT NOT NULL,
     project_item_id INTEGER,
+    title           TEXT,
+    category        TEXT NOT NULL DEFAULT 'security',  -- security|high-impact-bug|dependency|sast
     status          TEXT NOT NULL DEFAULT 'backlog',  -- backlog|planning|building|reviewing|done|error
     planner_session TEXT,       -- Devin session ID
     builder_session TEXT,
@@ -160,6 +162,10 @@ CREATE TABLE issue_state (
     pr_url          TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
+    planning_started_at TEXT,   -- timestamp when moved to planning
+    building_started_at TEXT,   -- timestamp when moved to building
+    reviewing_started_at TEXT,  -- timestamp when moved to reviewing
+    done_at         TEXT,       -- timestamp when moved to done
     error_message   TEXT
 );
 
@@ -245,18 +251,33 @@ Output: Review comments on the PR. Final status: approved or changes_requested.
 
 The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engineering question: **"How do I know this is working?"**
 
-### Metrics
-- **Active Devin sessions** — count of running planner/builder/reviewer sessions
-- **Issues by status** — bar chart: backlog / planning / building / reviewing / done
-- **Time-to-remediation** — median time from issue creation to PR merge
-- **Session success rate** — % of Devin sessions that complete without error
-- **Throughput** — issues remediated per day/week
+### Metrics — What a VP of Engineering Wants to See
+
+**Pipeline Health ("Is the system working right now?")**
+- **Active Devin Sessions** — count of running planner/builder/reviewer sessions, broken down by type. Answers: "How busy is the system?"
+- **Issues by Status** — bar chart: backlog / planning / building / reviewing / done / error. Answers: "Where are things stuck?" A pile-up in any column signals a bottleneck.
+- **Error Rate** — % of sessions that ended in error, with most recent error messages. Answers: "Is something broken?"
+
+**Velocity & Efficiency ("Is this worth the investment?")**
+- **Time-to-Remediation (TTR)** — median and p90 time from issue entering Planning to PR merged. The headline metric. Broken down by stage (planning time, build time, review time) to show where time is spent.
+- **Throughput** — issues remediated per day/week. Trend line shows whether the system is accelerating.
+- **Session Success Rate** — % of Devin sessions that complete without error. Track over time to show reliability improving.
+- **Devin Compute Cost per Fix** — total session-minutes / issues completed. Proxy for cost-efficiency. (Computed from `session_log.duration_seconds`.)
+
+**Risk Posture ("Are we safer than yesterday?")**
+- **Open vs. Closed Vulnerability Trend** — line chart showing cumulative issues filed vs. issues remediated over time. The gap should be shrinking.
+- **Severity Breakdown** — issues by category (security / high-impact bug / dependency / SAST). Shows the system handles diverse risk types, not just version bumps.
+- **Mean Time to First Response (MTFR)** — time from issue creation to first planner session starting. Measures how quickly the system reacts.
+
+**Recent Activity ("What just happened?")**
+- **Activity Feed** — latest 20 session events: session type, issue, status, duration, with links to PRs and issues. A VP can glance at this and understand the current state without digging.
 
 ### Implementation
 - Metrics computed from SQLite on each dashboard load (demo-scale, no need for a metrics pipeline)
 - Rendered via Jinja2 templates with Chart.js for visualizations
 - Auto-refreshes via htmx polling every 30 seconds
 - JSON API at `/api/metrics` for programmatic access
+- Dashboard layout: 4 summary cards at top (TTR, throughput, success rate, active sessions), two chart rows (pipeline funnel + trend lines), activity feed at bottom
 
 ---
 
