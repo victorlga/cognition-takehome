@@ -206,9 +206,12 @@ async def start_session_tracker_loop() -> None:
     interval = settings.poll_interval_seconds
     logger.info("Session tracker started — checking every %d seconds", interval)
 
+    devin = DevinClient()
+    github = GitHubClient()
+
     while True:
         try:
-            updates = await check_active_sessions()
+            updates = await check_active_sessions(devin=devin, github=github)
             if updates:
                 logger.info(
                     "Tracker cycle: %d session(s) updated", len(updates)

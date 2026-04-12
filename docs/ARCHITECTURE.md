@@ -306,7 +306,6 @@ cognition-takehome/
 │   │   ├── github_client.py    # GitHub API helper
 │   │   ├── state_machine.py    # Issue state transitions
 │   │   ├── prompts.py          # Devin session prompt templates
-│   │   ├── scanner.py          # Periodic vuln scan logic
 │   │   ├── db.py               # SQLite models + queries
 │   │   └── dashboard.py        # Dashboard routes + metrics
 │   └── templates/
