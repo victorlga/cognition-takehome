@@ -491,3 +491,51 @@ The 4 picks tell a varied security story:
 - Auto-advancement (e.g., planner completes → automatically set `state:building` label) is still not implemented. The tracker posts a comment but does not trigger the next transition.
 - ACU consumption tracking still not implemented
 - `structured_output_schema` still not used
+
+---
+
+## [REBUILD_LOOP] — 2026-04-12 — Reviewing → Building retry loop for automatic rebuild on reviewer changes_requested
+
+**What changed:**
+- Added `reviewing → building` back-edge to the state machine's `VALID_TRANSITIONS`
+- Added `rebuild_count INTEGER NOT NULL DEFAULT 0` column to `issue_state` schema
+- Added `max_rebuild_attempts: int = 3` setting to `config.py`
+- Added rebuild detection logic in `state_machine.py`: when transitioning `reviewing → building`, the state machine increments `rebuild_count`, checks against `max_rebuild_attempts`, finalizes the reviewer session, and spawns a new builder session with the reviewer's feedback
+- Added `build_rebuild_prompt()` to `prompts.py` — structured prompt that includes the PR URL, reviewer feedback, and rebuild attempt number
+- Added `get_pr_reviews()` and `get_pr_review_comments()` to `github_client.py` — fetches PR review status and inline comments from GitHub API
+- Added auto-rebuild trigger in `session_tracker.py`: when a reviewer session completes, `_maybe_trigger_rebuild()` checks the PR for `CHANGES_REQUESTED` reviews, collects feedback, and triggers the `reviewing → building` transition
+- Added helper functions `_extract_pr_number()` and `_format_review_feedback()` to `session_tracker.py`
+- Updated `ARCHITECTURE.md`: added rebuild loop to Mermaid diagram, added rebuild row to transitions table, added rebuild prompt template, added `rebuild_count` to schema, added `MAX_REBUILD_ATTEMPTS` to secrets table, added design decision #10
+- Added 24 new tests (118 total, all passing): state machine rebuild tests, prompt rebuild tests, session tracker rebuild helper tests
+
+**Files touched:**
+- `orchestrator/app/config.py` (modified — added `max_rebuild_attempts`)
+- `orchestrator/app/db.py` (modified — added `rebuild_count` column)
+- `orchestrator/app/state_machine.py` (modified — rebuild transition logic, `review_feedback` parameter)
+- `orchestrator/app/prompts.py` (modified — added `REBUILD_TEMPLATE` and `build_rebuild_prompt()`)
+- `orchestrator/app/github_client.py` (modified — added `get_pr_reviews()` and `get_pr_review_comments()`)
+- `orchestrator/app/session_tracker.py` (modified — added `_maybe_trigger_rebuild()`, `_extract_pr_number()`, `_format_review_feedback()`)
+- `orchestrator/tests/test_state_machine.py` (modified — 4 new rebuild tests)
+- `orchestrator/tests/test_prompts.py` (modified — 5 new rebuild prompt tests)
+- `orchestrator/tests/test_session_tracker.py` (modified — 15 new rebuild helper/integration tests)
+- `docs/ARCHITECTURE.md` (modified — rebuild loop documentation)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All 118 tests pass: `python -m pytest orchestrator/tests/ -v`
+- Rebuild detection correctly distinguishes `reviewing → building` (rebuild) from `planning → building` (initial build)
+- Rebuild count increments correctly and caps at `max_rebuild_attempts`
+- Reviewer session is finalized (not the builder) on rebuild
+- Auto-rebuild trigger correctly detects `CHANGES_REQUESTED` and skips when `APPROVED` is more recent
+- Review feedback is collected from both review bodies and inline comments
+
+**What the next phase needs to know:**
+- The rebuild loop is fully automated: reviewer session completes → tracker detects changes_requested → collects feedback → triggers reviewing→building → new builder session with feedback
+- `max_rebuild_attempts` defaults to 3, configurable via env var `MAX_REBUILD_ATTEMPTS`
+- The rebuild session pushes to the same PR branch (does not create a new PR)
+- `handle_status_change()` now accepts a `review_feedback: str` parameter for rebuild transitions
+
+**Open questions / known gaps:**
+- The rebuild builder session's prompt instructs it to push to the same branch, but this depends on Devin correctly identifying and checking out the existing PR branch
+- Auto-advancement (planner → builder → reviewer) is still not implemented — only the rebuild back-edge is automated
+- ACU consumption tracking still not implemented

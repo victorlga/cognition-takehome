@@ -39,6 +39,9 @@ class TestIsValidTransition:
         for status in ("backlog", "planning", "building", "reviewing"):
             assert is_valid_transition(status, "error") is True
 
+    def test_reviewing_to_building_allowed(self):
+        assert is_valid_transition("reviewing", "building") is True
+
     def test_skip_not_allowed(self):
         assert is_valid_transition("backlog", "building") is False
 
@@ -261,6 +264,110 @@ class TestHandleStatusChange:
         planner_log = next(l for l in logs if l["session_id"] == "sess-planner-1")
         assert planner_log["status"] == "completed"
         assert planner_log["finished_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_rebuild_creates_new_builder_session(self, mock_devin, mock_github):
+        """reviewing -> building should spawn a rebuild session."""
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="reviewing",
+            reviewer_session="sess-reviewer-1",
+            pr_url="https://github.com/org/repo/pull/5",
+        )
+        await db.insert_session_log(42, "sess-reviewer-1", "reviewer")
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="building",
+            devin=mock_devin,
+            github=mock_github,
+            review_feedback="Fix the failing tests.",
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "transitioned"
+        assert result["is_rebuild"] is True
+        assert result["rebuild_count"] == 1
+        assert result["session_id"] == "sess-abc123"
+        mock_devin.create_session.assert_called_once()
+
+        # DB should reflect rebuild
+        issue = await db.get_issue(42)
+        assert issue["status"] == "building"
+        assert issue["rebuild_count"] == 1
+        assert issue["builder_session"] == "sess-abc123"
+
+        # Reviewer session should be finalized
+        logs = await db.list_session_logs(issue_id=42)
+        reviewer_log = next(l for l in logs if l["session_id"] == "sess-reviewer-1")
+        assert reviewer_log["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_exceeds_max_attempts_sets_error(self, mock_devin, mock_github):
+        """When rebuild_count exceeds max_rebuild_attempts, issue goes to error."""
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="reviewing",
+            rebuild_count=3,  # already at max (default is 3)
+        )
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="building",
+            devin=mock_devin,
+            github=mock_github,
+            review_feedback="Fix tests.",
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "error"
+        mock_devin.create_session.assert_not_called()
+
+        issue = await db.get_issue(42)
+        assert issue["status"] == "error"
+        assert "max rebuild attempts" in issue["error_message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_uses_fallback_feedback(self, mock_devin, mock_github):
+        """When review_feedback is empty, a fallback message is used."""
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="reviewing",
+            pr_url="https://github.com/org/repo/pull/5",
+        )
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="building",
+            devin=mock_devin,
+            github=mock_github,
+            # review_feedback intentionally omitted (empty string default)
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "transitioned"
+        assert result["is_rebuild"] is True
+        # The prompt should still have been generated (with fallback text)
+        mock_devin.create_session.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_api_failure_sets_error(self, mock_devin, mock_github):
+        """If Devin API fails during rebuild, issue goes to error."""
+        mock_devin.create_session.side_effect = Exception("API down")
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="reviewing",
+        )
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="building",
+            devin=mock_devin,
+            github=mock_github,
+            review_feedback="Fix tests.",
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "error"
+        issue = await db.get_issue(42)
+        assert issue["status"] == "error"
+        assert "rebuild" in issue["error_message"].lower()
 
     @pytest.mark.asyncio
     async def test_done_transition_finalizes_reviewer_session(self, mock_devin, mock_github):

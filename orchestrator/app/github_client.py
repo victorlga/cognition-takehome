@@ -111,6 +111,43 @@ class GitHubClient:
         # Add the target label (idempotent — GitHub ignores duplicates)
         await self.add_labels(issue_number, [target_label])
 
+    async def get_pr_reviews(self, pr_number: int) -> list[dict[str, Any]]:
+        """Fetch all reviews on a pull request.
+
+        Returns the list of review objects (state, body, user, etc.).
+        Used by the session tracker to detect ``changes_requested`` outcomes.
+        """
+        client = await self._get_client()
+        resp = await client.get(
+            f"{GITHUB_API}/repos/{self.repo}/pulls/{pr_number}/reviews"
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_pr_review_comments(self, pr_number: int) -> list[dict[str, Any]]:
+        """Fetch all inline review comments on a pull request.
+
+        Returns file-level comments (not top-level issue comments).
+        Used to build reviewer feedback for rebuild sessions.
+        """
+        client = await self._get_client()
+        all_comments: list[dict[str, Any]] = []
+        page = 1
+        while page <= 10:
+            resp = await client.get(
+                f"{GITHUB_API}/repos/{self.repo}/pulls/{pr_number}/comments",
+                params={"per_page": 100, "page": page},
+            )
+            resp.raise_for_status()
+            batch: list[dict[str, Any]] = resp.json()
+            if not batch:
+                break
+            all_comments.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return all_comments
+
     async def list_issues_with_labels(
         self, labels: list[str], state: str = "open",
     ) -> list[dict[str, Any]]:

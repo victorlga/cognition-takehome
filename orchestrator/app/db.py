@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS issue_state (
     building_started_at TEXT,
     reviewing_started_at TEXT,
     done_at             TEXT,
+    rebuild_count       INTEGER NOT NULL DEFAULT 0,
     error_message       TEXT
 );
 

@@ -16,7 +16,13 @@ from app.config import settings
 from app.db import now_utc
 from app.devin_client import DevinClient
 from app.github_client import GitHubClient
-from app.prompts import IssueContext, build_builder_prompt, build_planner_prompt, build_reviewer_prompt
+from app.prompts import (
+    IssueContext,
+    build_builder_prompt,
+    build_planner_prompt,
+    build_rebuild_prompt,
+    build_reviewer_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +31,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "backlog": {"planning"},
     "planning": {"building"},
     "building": {"reviewing"},
-    "reviewing": {"done"},
+    "reviewing": {"done", "building"},  # back-edge: reviewer requests changes
 }
 
 # Any status can transition to "error"
@@ -40,6 +46,9 @@ _PREV_SESSION_COLUMN: dict[str, str] = {
     "reviewing": "builder_session",
     "done": "reviewer_session",
 }
+
+# When reviewing → building, the reviewer session should be finalized.
+_REBUILD_PREV_SESSION_COLUMN = "reviewer_session"
 
 
 def is_valid_transition(old_status: str, new_status: str) -> bool:
@@ -57,6 +66,7 @@ async def handle_status_change(
     issue_node_id: str = "",
     devin: DevinClient | None = None,
     github: GitHubClient | None = None,
+    review_feedback: str = "",
 ) -> dict[str, Any]:
     """Main entry point: react to a label-driven status change on an issue.
 
@@ -65,6 +75,9 @@ async def handle_status_change(
 
     If *github* is provided, the issue's ``state:*`` label is updated on
     GitHub to stay in sync with the internal DB state.
+
+    *review_feedback* is used on rebuild transitions (reviewing → building)
+    to pass the reviewer's comments to the new builder session.
 
     Returns a dict summarising the action taken.
     """
@@ -98,11 +111,15 @@ async def handle_status_change(
         issue_number=issue_number,
     )
 
+    # Detect rebuild (reviewing → building) vs normal forward transition
+    is_rebuild = old_status == "reviewing" and new_status_lower == "building"
+
     result: dict[str, Any] = {
         "action": "transitioned",
         "issue_number": issue_number,
         "old_status": old_status,
         "new_status": new_status_lower,
+        "is_rebuild": is_rebuild,
     }
 
     # Upsert base fields
@@ -115,15 +132,25 @@ async def handle_status_change(
     # Finalize the previous stage's session so it stops showing as
     # "active" on the dashboard.  The WHERE finished_at IS NULL guard
     # inside update_session_log makes this idempotent.
-    prev_col = _PREV_SESSION_COLUMN.get(new_status_lower)
-    if prev_col and existing:
-        prev_session_id = existing.get(prev_col)
+    if is_rebuild:
+        # On rebuild, finalize the reviewer session (not the builder).
+        prev_session_id = (existing or {}).get(_REBUILD_PREV_SESSION_COLUMN)
         if prev_session_id:
             await db.update_session_log(prev_session_id, "completed")
             logger.info(
-                "Finalized previous session %s for issue #%d on transition to %s",
-                prev_session_id, issue_number, new_status_lower,
+                "Finalized reviewer session %s for issue #%d on rebuild",
+                prev_session_id, issue_number,
             )
+    else:
+        prev_col = _PREV_SESSION_COLUMN.get(new_status_lower)
+        if prev_col and existing:
+            prev_session_id = existing.get(prev_col)
+            if prev_session_id:
+                await db.update_session_log(prev_session_id, "completed")
+                logger.info(
+                    "Finalized previous session %s for issue #%d on transition to %s",
+                    prev_session_id, issue_number, new_status_lower,
+                )
 
     # Handle each transition
     if new_status_lower == "planning":
@@ -146,6 +173,50 @@ async def handle_status_change(
             update_fields["status"] = "error"
             update_fields["error_message"] = "Failed to create planner session"
             result["action"] = "error"
+
+    elif new_status_lower == "building" and is_rebuild:
+        # --- Rebuild path: reviewing → building ---
+        rebuild_count = (existing or {}).get("rebuild_count", 0) + 1
+        update_fields["rebuild_count"] = rebuild_count
+        update_fields["building_started_at"] = now_utc()
+
+        # Check rebuild cap
+        if rebuild_count > settings.max_rebuild_attempts:
+            logger.warning(
+                "Issue #%d exceeded max rebuild attempts (%d) — moving to error",
+                issue_number, settings.max_rebuild_attempts,
+            )
+            update_fields["status"] = "error"
+            update_fields["error_message"] = (
+                f"Exceeded max rebuild attempts ({settings.max_rebuild_attempts})"
+            )
+            result["action"] = "error"
+        else:
+            pr_url = (existing or {}).get("pr_url", "")
+            if not review_feedback:
+                review_feedback = "(Review feedback not available — check the PR comments.)"
+            prompt = build_rebuild_prompt(ctx, pr_url, review_feedback, rebuild_count)
+            try:
+                session = await devin.create_session(
+                    prompt=prompt,
+                    tags=[f"issue-{issue_number}", "builder", "rebuild"],
+                    repos=[settings.github_repo],
+                    title=f"[Rebuild #{rebuild_count}] #{issue_number}: {issue_title[:60]}",
+                )
+                session_id = session.get("session_id", "")
+                update_fields["builder_session"] = session_id
+                await db.insert_session_log(issue_number, session_id, "builder")
+                result["session_id"] = session_id
+                result["rebuild_count"] = rebuild_count
+                logger.info(
+                    "Spawned rebuild session %s for issue #%d (attempt %d)",
+                    session_id, issue_number, rebuild_count,
+                )
+            except Exception:
+                logger.exception("Failed to create rebuild session for issue #%d", issue_number)
+                update_fields["status"] = "error"
+                update_fields["error_message"] = "Failed to create rebuild session"
+                result["action"] = "error"
 
     elif new_status_lower == "building":
         update_fields["building_started_at"] = now_utc()
