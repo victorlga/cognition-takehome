@@ -57,12 +57,18 @@ class TestHandleStatusChange:
         dv.create_session.return_value = {"session_id": "sess-abc123"}
         return dv
 
+    @pytest.fixture
+    def mock_github(self):
+        gh = AsyncMock()
+        return gh
+
     @pytest.mark.asyncio
-    async def test_planning_creates_planner_session(self, mock_devin):
+    async def test_planning_creates_planner_session(self, mock_devin, mock_github):
         result = await handle_status_change(
             issue_number=42,
             new_status="Planning",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
@@ -70,6 +76,7 @@ class TestHandleStatusChange:
         assert result["new_status"] == "planning"
         assert result["session_id"] == "sess-abc123"
         mock_devin.create_session.assert_called_once()
+        mock_github.set_state_label.assert_called_once_with(42, "planning")
 
         # Verify DB was updated
         issue = await db.get_issue(42)
@@ -78,7 +85,7 @@ class TestHandleStatusChange:
         assert issue["planner_session"] == "sess-abc123"
 
     @pytest.mark.asyncio
-    async def test_building_creates_builder_session(self, mock_devin):
+    async def test_building_creates_builder_session(self, mock_devin, mock_github):
         # Seed existing issue in planning state
         await db.upsert_issue(42, issue_node_id="I_node_1", status="planning")
 
@@ -86,75 +93,85 @@ class TestHandleStatusChange:
             issue_number=42,
             new_status="Building",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
         assert result["action"] == "transitioned"
         assert result["new_status"] == "building"
         mock_devin.create_session.assert_called_once()
+        mock_github.set_state_label.assert_called_once_with(42, "building")
 
         issue = await db.get_issue(42)
         assert issue["status"] == "building"
         assert issue["builder_session"] == "sess-abc123"
 
     @pytest.mark.asyncio
-    async def test_reviewing_creates_reviewer_session(self, mock_devin):
+    async def test_reviewing_creates_reviewer_session(self, mock_devin, mock_github):
         await db.upsert_issue(42, issue_node_id="I_node_1", status="building")
 
         result = await handle_status_change(
             issue_number=42,
             new_status="Reviewing",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
         assert result["action"] == "transitioned"
         assert result["new_status"] == "reviewing"
         mock_devin.create_session.assert_called_once()
+        mock_github.set_state_label.assert_called_once_with(42, "reviewing")
 
     @pytest.mark.asyncio
-    async def test_done_logs_completion(self, mock_devin):
+    async def test_done_logs_completion(self, mock_devin, mock_github):
         await db.upsert_issue(42, issue_node_id="I_node_1", status="reviewing")
 
         result = await handle_status_change(
             issue_number=42,
             new_status="Done",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
         assert result["action"] == "transitioned"
         assert result["new_status"] == "done"
         mock_devin.create_session.assert_not_called()
+        mock_github.set_state_label.assert_called_once_with(42, "done")
 
         issue = await db.get_issue(42)
         assert issue["status"] == "done"
         assert issue["done_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_invalid_transition_rejected(self, mock_devin):
+    async def test_invalid_transition_rejected(self, mock_devin, mock_github):
         await db.upsert_issue(42, issue_node_id="I_node_1", status="backlog")
 
         result = await handle_status_change(
             issue_number=42,
             new_status="Building",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
         assert result["action"] == "rejected"
         assert result["reason"] == "invalid_transition"
         mock_devin.create_session.assert_not_called()
+        mock_github.set_state_label.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_devin_api_failure_sets_error(self):
         dv = AsyncMock()
         dv.create_session.side_effect = Exception("API unreachable")
+        gh = AsyncMock()
 
         result = await handle_status_change(
             issue_number=42,
             new_status="Planning",
             devin=dv,
+            github=gh,
             **_ISSUE_KWARGS,
         )
 
@@ -162,13 +179,16 @@ class TestHandleStatusChange:
         issue = await db.get_issue(42)
         assert issue["status"] == "error"
         assert "planner" in issue["error_message"].lower()
+        # Label is synced to "error" even on failure
+        gh.set_state_label.assert_called_once_with(42, "error")
 
     @pytest.mark.asyncio
-    async def test_session_log_created(self, mock_devin):
-        result = await handle_status_change(
+    async def test_session_log_created(self, mock_devin, mock_github):
+        await handle_status_change(
             issue_number=42,
             new_status="Planning",
             devin=mock_devin,
+            github=mock_github,
             **_ISSUE_KWARGS,
         )
 
@@ -179,12 +199,13 @@ class TestHandleStatusChange:
         assert logs[0]["status"] == "running"
 
     @pytest.mark.asyncio
-    async def test_new_issue_defaults_to_backlog(self, mock_devin):
+    async def test_new_issue_defaults_to_backlog(self, mock_devin, mock_github):
         """An issue not yet in the DB should be treated as being in backlog."""
         result = await handle_status_change(
             issue_number=99,
             new_status="planning",
             devin=mock_devin,
+            github=mock_github,
             issue_title="New issue",
             issue_body="Body",
             issue_url="https://github.com/victorlga/superset/issues/99",
@@ -193,3 +214,21 @@ class TestHandleStatusChange:
         assert result["action"] == "transitioned"
         assert result["old_status"] == "backlog"
         assert result["new_status"] == "planning"
+
+    @pytest.mark.asyncio
+    async def test_label_sync_failure_does_not_break_transition(self, mock_devin):
+        """If set_state_label raises, the transition itself still succeeds."""
+        gh = AsyncMock()
+        gh.set_state_label.side_effect = Exception("GitHub API down")
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="Planning",
+            devin=mock_devin,
+            github=gh,
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "transitioned"
+        assert result["new_status"] == "planning"
+        gh.set_state_label.assert_called_once()

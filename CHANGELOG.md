@@ -441,3 +441,53 @@ The 4 picks tell a varied security story:
 - ACU consumption tracking (`acus_consumed` from the API) is not yet implemented — could feed into cost-per-fix metrics
 - The session tracker does not yet auto-advance issues to the next pipeline stage (e.g., planning → building when planner finishes). This would require the tracker to also apply label changes on GitHub.
 - `structured_output_schema` support not yet used — could enable structured plan extraction from planner sessions
+
+---
+
+## [FEEDBACK_LOOP] — 2026-04-12 — Close the feedback loop: bidirectional GitHub sync
+
+**What changed:**
+- Restored and wired 8 previously unused methods to close the orchestrator's feedback loop
+- **State machine → GitHub label sync:** After every transition, `set_state_label()` updates the issue's `state:*` label on GitHub to match the internal DB state. This makes the system self-driving — no human needs to manually change labels after the initial trigger.
+- **Session tracker → GitHub issue comments:** When a Devin session completes or fails, the tracker posts an audit-trail comment on the corresponding GitHub issue (includes session type, status, duration, and PR URL if applicable).
+- **Dashboard → `/api/issues` endpoint:** New JSON endpoint exposes all tracked issues via `db.list_issues()`.
+- **Restored future-use methods:** `DevinClient.send_message()`, `DevinClient.get_messages()`, `GitHubClient.get_issue()` restored for downstream features.
+- **Restored helper methods:** `GitHubClient.add_labels()`, `remove_label()`, `post_issue_comment()` now actively used by `set_state_label()` and session tracker.
+- Added `_build_status_comment()` helper to format Markdown comments for the audit trail.
+- Updated `handle_status_change()` signature to accept optional `github` parameter; poller passes its existing `GitHubClient` instance through.
+- Updated `check_active_sessions()` signature to accept optional `github` parameter.
+- Added 12 new tests: label sync assertions on all transitions, label sync failure resilience, comment posting assertions, comment failure resilience, `_build_status_comment` formatting, `test_list_issues`, `TestSendMessage`, `TestGetMessages`.
+- Total test count: 90 → all passing.
+- Updated `docs/ARCHITECTURE.md`: Mermaid diagram shows feedback arrows, new design decision #9, `/api/issues` endpoint documented.
+
+**Files touched:**
+- `orchestrator/app/github_client.py` (restored 5 methods: `get_issue`, `post_issue_comment`, `add_labels`, `remove_label`, `set_state_label`)
+- `orchestrator/app/devin_client.py` (restored 2 methods: `send_message`, `get_messages`)
+- `orchestrator/app/db.py` (restored `list_issues()`)
+- `orchestrator/app/state_machine.py` (wired `set_state_label()`, added `github` parameter)
+- `orchestrator/app/session_tracker.py` (wired `post_issue_comment()`, added `_build_status_comment()`, added `github` parameter)
+- `orchestrator/app/poller.py` (passes `github` to `handle_status_change()`)
+- `orchestrator/app/dashboard.py` (added `/api/issues` endpoint)
+- `orchestrator/tests/test_state_machine.py` (added `mock_github` fixture, label sync assertions, resilience test)
+- `orchestrator/tests/test_session_tracker.py` (added `mock_github` to all tests, comment assertions, `TestBuildStatusComment`)
+- `orchestrator/tests/test_devin_client.py` (restored `TestSendMessage`, added `TestGetMessages`)
+- `orchestrator/tests/test_db.py` (restored `test_list_issues`)
+- `docs/ARCHITECTURE.md` (updated diagram, dashboard docs, design decisions)
+- `CHANGELOG.md` (this entry)
+
+**How it was verified:**
+- All 90 tests pass (`python -m pytest orchestrator/tests/ -v`)
+- `pyflakes` reports zero warnings across `app/` and `tests/`
+- Label sync failure is tested and confirmed non-breaking (transition succeeds even if GitHub API is down)
+- Comment posting failure is tested and confirmed non-breaking (session tracking succeeds even if comment fails)
+
+**What the next phase needs to know:**
+- The orchestrator now writes back to GitHub after every transition (labels) and session completion (comments)
+- `send_message()` and `get_messages()` are available for sending context to running Devin sessions (e.g., posting plan text to a builder session)
+- The `/api/issues` endpoint can be used by a frontend or monitoring tool to list all tracked issues
+- The `github` parameter is optional in both `handle_status_change()` and `check_active_sessions()` — if not provided, a new `GitHubClient()` is instantiated
+
+**Open questions / known gaps:**
+- Auto-advancement (e.g., planner completes → automatically set `state:building` label) is still not implemented. The tracker posts a comment but does not trigger the next transition.
+- ACU consumption tracking still not implemented
+- `structured_output_schema` still not used

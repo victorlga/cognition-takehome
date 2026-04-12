@@ -33,6 +33,9 @@ Instructions:
 5. Identify test files that need updating or new tests to write.
 6. Post the plan as a comment on the issue.
 
+Note: The orchestrator automatically tracks session status and updates issue labels.
+Focus on delivering the plan content — status tracking is handled externally.
+
 Output: A structured remediation plan posted as an issue comment.\
 """
 
@@ -53,7 +56,10 @@ Instructions:
 4. Run the relevant test suite to verify.
 5. Open a PR against main with a clear description.
 
-Output: A PR URL posted as an issue comment.\
+Note: The orchestrator automatically posts the PR URL and status updates on the
+issue thread. Focus on the implementation — do not post duplicate status comments.
+
+Output: A pull request opened against main.\
 """
 
 REVIEWER_TEMPLATE = """\
@@ -67,6 +73,9 @@ Instructions:
 2. Run the test suite. If tests fail, leave review comments.
 3. If changes are needed, leave specific inline comments.
 4. If the PR is ready, approve it.
+
+Note: The orchestrator automatically tracks review status and updates issue labels.
+Focus on the code review — status tracking is handled externally.
 
 Output: Review comments on the PR. Final status: approved or changes_requested.\
 """

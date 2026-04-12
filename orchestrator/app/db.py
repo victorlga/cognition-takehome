@@ -141,6 +141,7 @@ async def upsert_issue(issue_id: int, **kwargs: Any) -> None:
 
 
 async def list_issues() -> list[dict[str, Any]]:
+    """Return all issue_state rows ordered by issue_id."""
     async with _connect() as db:
         cursor = await db.execute("SELECT * FROM issue_state ORDER BY issue_id")
         rows = await cursor.fetchall()
