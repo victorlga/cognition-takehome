@@ -353,3 +353,48 @@ The 4 picks tell a varied security story:
 - There is NO webhook endpoint — polling is the only trigger
 - `GITHUB_WEBHOOK_SECRET` is no longer a config setting
 - The only env vars needed are: `DEVIN_API_KEY`, `DEVIN_ORG_ID`, `GITHUB_TOKEN` (plus optional `POLL_INTERVAL_SECONDS`, `POLLING_ENABLED`)
+
+---
+
+## [PHASE_4] — 2026-04-12 — Observability dashboard with metrics and activity feed
+
+**What changed:**
+- Implemented full dashboard at `/dashboard` with 4 metric groups answering VP-of-Engineering concerns
+- **Pipeline Health**: active sessions (with type breakdown), issues by status funnel (horizontal bar chart), error rate with indicator and recent error messages
+- **Velocity & Efficiency**: TTR median + p90 + per-stage breakdown (stacked bar), throughput over time (line chart), session success rate, Devin compute cost per fix
+- **Risk Posture**: open vs. closed vulnerability trend (dual cumulative line chart), severity/category breakdown (donut chart), mean time to first response
+- **Recent Activity**: scrollable feed table with session details, status badges, PR links
+- Auto-refresh via htmx polling `/api/metrics` every 30 seconds with Chart.js live updates
+- JSON API at `/api/metrics` returns structured data covering all metric groups
+- Dashboard uses Jinja2 server-side rendering + htmx + Chart.js (CDN) — no separate build step
+- Responsive CSS grid layout, colour-coded status badges, professional light theme
+- Created sample data seed script (`orchestrator/scripts/seed_sample_data.py`) for testing
+- Updated existing tests to match new metrics API shape (62 tests, all passing)
+
+**Files touched:**
+- `orchestrator/app/dashboard.py` (updated — Jinja2 template rendering, Request injection)
+- `orchestrator/app/db.py` (updated — comprehensive `get_metrics()` with 4 metric groups, `_percentile()` helper)
+- `orchestrator/templates/dashboard.html` (updated — full Jinja2 + htmx + Chart.js dashboard)
+- `orchestrator/tests/test_db.py` (updated — tests for new metrics API shape)
+- `orchestrator/scripts/seed_sample_data.py` (new — sample data seeder for demo/testing)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All 62 unit tests pass: `python -m pytest orchestrator/tests/ -v`
+- Dashboard renders with sample data at `http://localhost:8000/dashboard`
+- `curl http://localhost:8000/api/metrics` returns valid JSON with all fields
+- Charts render correctly with Chart.js (pipeline funnel, trend lines, donut, stacked bar)
+- Auto-refresh confirmed via htmx polling every 30 seconds
+- Activity feed shows recent sessions with status badges and PR links
+
+**What the next phase needs to know:**
+- Dashboard URL: `http://localhost:8000/dashboard`
+- Metrics API: `http://localhost:8000/api/metrics`
+- Dashboard screenshot available for Loom prep
+- Seed script at `orchestrator/scripts/seed_sample_data.py` can populate sample data for demos
+- The `/api/metrics` JSON structure has changed from Phase 2 stub: `issues_by_status` → `issues`, plus many new fields
+
+**Open questions / known gaps:**
+- Dashboard data is computed from SQLite on each page load (demo-scale) — would need a metrics pipeline for production
+- Chart.js and htmx loaded from CDN — requires internet access; could bundle for air-gapped deployments
+- The seed script is a dev helper and not committed to the main codebase (in `scripts/` directory)

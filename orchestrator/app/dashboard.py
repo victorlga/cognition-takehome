@@ -1,33 +1,35 @@
 """Dashboard routes and metrics API.
 
-The full htmx dashboard is Phase 4. For now this provides:
-- GET /dashboard        — stub page
-- GET /api/metrics      — JSON metrics from the database
+Serves:
+- GET /dashboard        — Jinja2 + htmx + Chart.js observability dashboard
+- GET /api/metrics      — JSON metrics for programmatic access
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import os
+
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 
 from app.db import get_metrics
 
 router = APIRouter()
 
+# Resolve templates directory relative to this file
+_TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
+templates = Jinja2Templates(directory=_TEMPLATES_DIR)
+
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page() -> HTMLResponse:
-    """Stub dashboard — full implementation in Phase 4."""
-    html = """<!DOCTYPE html>
-<html>
-<head><title>Orchestrator Dashboard</title></head>
-<body>
-  <h1>Vulnerability Remediation Dashboard</h1>
-  <p>Full dashboard coming in Phase 4. <a href="/api/metrics">View raw metrics JSON</a>.</p>
-  <p><a href="/health">Health check</a></p>
-</body>
-</html>"""
-    return HTMLResponse(content=html)
+async def dashboard_page(request: Request) -> HTMLResponse:
+    """Render the full observability dashboard."""
+    metrics = await get_metrics()
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "metrics": metrics},
+    )
 
 
 @router.get("/api/metrics")
