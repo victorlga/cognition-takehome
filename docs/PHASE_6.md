@@ -44,7 +44,7 @@ This phase is primarily **manual work for Victor**. Devin can help prepare talki
 
 **Talking points:**
 - Architecture overview (show Mermaid diagram or simplified version)
-- "The system is triggered by GitHub Project board movements — a real kanban workflow"
+- "The system polls for label changes on GitHub issues — zero webhook setup, just `docker compose up`"
 - Demo the flow:
   1. Show an issue in Backlog
   2. Move to Planning → show the planner Devin session starting
@@ -53,7 +53,7 @@ This phase is primarily **manual work for Victor**. Devin can help prepare talki
   5. Show the PR with the fix + tests
   6. Show the reviewer Devin session approving
   7. Show the merged PR
-- "All orchestrated by a lightweight FastAPI backend — here's the webhook handler, the state machine, the Devin API client"
+- "All orchestrated by a lightweight FastAPI backend — here's the poller, the state machine, the Devin API client"
 - Show the dashboard: "An engineering leader can see at a glance: N issues remediated, X% success rate, Y-hour median time-to-fix"
 - "The system also runs periodic scans to discover new vulnerabilities automatically"
 

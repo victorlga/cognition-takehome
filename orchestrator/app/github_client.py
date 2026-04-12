@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 from typing import Any
 
@@ -14,7 +12,6 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
-GITHUB_GRAPHQL = "https://api.github.com/graphql"
 
 
 class GitHubClient:
@@ -114,94 +111,35 @@ class GitHubClient:
         # Add the target label (idempotent — GitHub ignores duplicates)
         await self.add_labels(issue_number, [target_label])
 
-    # -- GraphQL helpers -----------------------------------------------------
+    async def list_issues_with_labels(
+        self, labels: list[str], state: str = "open",
+    ) -> list[dict[str, Any]]:
+        """Fetch issues that carry **all** of the given labels.
 
-    async def resolve_issue_from_node_id(self, node_id: str) -> dict[str, Any] | None:
-        """Resolve a project item's content_node_id to issue details via GraphQL."""
-        query = """
-        query($nodeId: ID!) {
-          node(id: $nodeId) {
-            ... on Issue {
-              number
-              title
-              body
-              url
-              labels(first: 10) { nodes { name } }
-            }
-          }
-        }
+        Uses ``GET /repos/{repo}/issues?labels=...&state=...``.
+        Returns the full issue JSON objects (number, title, body, labels, etc.).
+        Handles pagination automatically (up to 10 pages / 1 000 issues).
         """
         client = await self._get_client()
-        try:
-            resp = await client.post(
-                GITHUB_GRAPHQL,
-                json={"query": query, "variables": {"nodeId": node_id}},
+        label_param = ",".join(labels)
+        all_issues: list[dict[str, Any]] = []
+        page = 1
+        while page <= 10:
+            resp = await client.get(
+                f"{GITHUB_API}/repos/{self.repo}/issues",
+                params={
+                    "labels": label_param,
+                    "state": state,
+                    "per_page": 100,
+                    "page": page,
+                },
             )
             resp.raise_for_status()
-        except httpx.HTTPStatusError:
-            logger.exception("GraphQL request failed for node %s", node_id)
-            return None
-        data = resp.json()
-        node = data.get("data", {}).get("node")
-        if node and node.get("number"):
-            return node
-        return None
-
-    async def get_project_item_status(self, item_node_id: str) -> str | None:
-        """Read the Status single-select field value from a project item via GraphQL."""
-        query = """
-        query($nodeId: ID!) {
-          node(id: $nodeId) {
-            ... on ProjectV2Item {
-              fieldValueByName(name: "Status") {
-                ... on ProjectV2ItemFieldSingleSelectValue {
-                  name
-                }
-              }
-            }
-          }
-        }
-        """
-        client = await self._get_client()
-        resp = await client.post(
-            GITHUB_GRAPHQL,
-            json={"query": query, "variables": {"nodeId": item_node_id}},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        field_value = (
-            data.get("data", {})
-            .get("node", {})
-            .get("fieldValueByName")
-        )
-        if field_value:
-            return field_value.get("name")
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Webhook signature verification
-# ---------------------------------------------------------------------------
-
-def verify_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
-    """Verify the HMAC-SHA256 signature from GitHub webhooks.
-
-    Args:
-        payload_body: Raw request body bytes.
-        signature_header: Value of the X-Hub-Signature-256 header
-                          (e.g. "sha256=abc123...").
-        secret: The webhook secret string.
-
-    Returns:
-        True if the signature is valid, False otherwise.
-    """
-    if not signature_header:
-        return False
-
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        payload_body,
-        hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature_header)
+            batch: list[dict[str, Any]] = resp.json()
+            if not batch:
+                break
+            all_issues.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return all_issues

@@ -246,3 +246,110 @@ The 4 picks tell a varied security story:
 **Open questions / known gaps:**
 - `set_state_label()` and `remove_label()` are implemented but not yet called from the state machine — future phases may use them to sync labels after internal state changes
 - Real end-to-end test (apply label → webhook fires → Devin session created) not yet performed — requires webhook URL to be pointed at a running orchestrator instance
+
+---
+
+## [POLLING_REFACTOR] — 2026-04-12 — Replace webhook-based trigger with polling as primary trigger
+
+**What changed:**
+- Added `orchestrator/app/poller.py` — polling-based state machine driver with `extract_state_from_labels()`, `poll_once()`, and `start_polling_loop()` functions
+- Modified `orchestrator/app/config.py` — added `poll_interval_seconds` (default: 30) and `polling_enabled` (default: true) settings
+- Modified `orchestrator/app/github_client.py` — added `list_issues_with_labels()` method for fetching issues by label (paginated)
+- Modified `orchestrator/app/main.py` — lifespan now starts background poller on startup (if enabled) and cancels it on shutdown
+- Added `orchestrator/tests/test_poller.py` — tests for label extraction and poll_once behavior (new issues, in-sync issues, missing labels, API failures, multiple issues, invalid transitions)
+- Modified `docker-compose.yml` — added `POLL_INTERVAL_SECONDS` and `POLLING_ENABLED` environment variables
+- Added `docs/REFACTOR_POLLING.md` — detailed refactor plan document
+- Updated ALL docs/ files to reflect polling as primary trigger:
+  - `docs/ARCHITECTURE.md` — updated Mermaid diagram, tech stack table, event flow section, secrets table, directory structure, design decisions
+  - `docs/PLAN.md` — updated project summary, Phase 2 description, Phase 5 definition of done
+  - `docs/PHASE_1.md` — replaced webhook setup step with label verification step
+  - `docs/PHASE_2.md` — added poller as primary trigger, webhook as optional secondary, updated procedure/deliverables/verification
+  - `docs/PHASE_3.md` — replaced "move on project board" with "apply state:* label" throughout
+  - `docs/PHASE_5.md` — updated E2E test steps and Quick Start instructions
+  - `docs/PHASE_6.md` — updated Loom talking points
+
+**Why this was needed:**
+- Webhooks require a publicly-reachable URL (tunnel or cloud deploy), adding friction for recruiters demoing the system
+- With polling, `docker compose up` works out of the box — zero tunnel, zero deploy, zero webhook config
+- The webhook endpoint is preserved as an optional secondary trigger for production use
+
+**Files touched:**
+- `orchestrator/app/poller.py` (new)
+- `orchestrator/app/config.py` (modified)
+- `orchestrator/app/github_client.py` (modified)
+- `orchestrator/app/main.py` (modified)
+- `orchestrator/tests/test_poller.py` (new)
+- `docker-compose.yml` (modified)
+- `docs/REFACTOR_POLLING.md` (new)
+- `docs/ARCHITECTURE.md` (modified)
+- `docs/PLAN.md` (modified)
+- `docs/PHASE_1.md` (modified)
+- `docs/PHASE_2.md` (modified)
+- `docs/PHASE_3.md` (modified)
+- `docs/PHASE_5.md` (modified)
+- `docs/PHASE_6.md` (modified)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All unit tests pass (existing + new poller tests)
+- Poller logic tested for: new issues, in-sync skipping, missing labels, API failures, multiple transitions, invalid transitions
+
+**What the next phase needs to know:**
+- Primary trigger is now **polling** (background asyncio task), not webhooks
+- Webhook endpoint still exists at `POST /webhooks/github` but is optional
+- New env vars: `POLL_INTERVAL_SECONDS` (default 30), `POLLING_ENABLED` (default true)
+- To trigger a transition: apply a `state:*` label + `remediation-target` label to an issue — the poller picks it up within one poll cycle
+- The state machine is idempotent — both polling and webhook triggers can run simultaneously without conflicts
+
+**Open questions / known gaps:**
+- Real end-to-end test (apply label → poller detects → Devin session created) not yet performed — requires API keys in environment
+
+---
+
+## [LEGACY_CLEANUP] — 2026-04-12 — Remove webhook infrastructure and all dead code
+
+**What changed:**
+- Deleted `orchestrator/app/webhook.py` — webhook endpoint fully removed (polling is the sole trigger)
+- Deleted `orchestrator/tests/test_webhook.py` — tests for deleted webhook code
+- Removed `verify_signature()` from `github_client.py` — only used by webhook.py
+- Removed `resolve_issue_from_node_id()` from `github_client.py` — dead GraphQL helper from projects_v2_item era
+- Removed `get_project_item_status()` from `github_client.py` — dead GraphQL helper, never called
+- Removed `GITHUB_GRAPHQL` constant and unused `hashlib`/`hmac` imports from `github_client.py`
+- Removed `github_webhook_secret` from `config.py` — no longer needed
+- Removed `GITHUB_WEBHOOK_SECRET` from `docker-compose.yml` — recruiter no longer sees a confusing env var
+- Removed `project_item_id` column from DB schema in `db.py` — never written to by any code path
+- Removed webhook router import and `include_router` from `main.py`
+- Updated docstrings in `state_machine.py` and `test_state_machine.py` to reference poller instead of webhook
+- Updated `docs/ARCHITECTURE.md` — removed webhook from Mermaid diagram, secrets table, directory listing, and design decisions
+- Updated `docs/PHASE_2.md` — removed all webhook references from procedure, deliverables, verification, and definition of done
+- Updated `docs/REFACTOR_POLLING.md` — marked webhook.py as DELETED, added "Files DELETED" section
+
+**Why this was needed:**
+- Webhook infrastructure was dead weight — polling is the sole trigger for the zero-config `docker compose up` use case
+- `resolve_issue_from_node_id()` and `get_project_item_status()` were truly dead code (not called by any path)
+- `project_item_id` DB column was never written to
+- `GITHUB_WEBHOOK_SECRET` in docker-compose confused recruiters into thinking they needed to configure it
+
+**Files touched:**
+- `orchestrator/app/webhook.py` (deleted)
+- `orchestrator/tests/test_webhook.py` (deleted)
+- `orchestrator/app/github_client.py` (modified — removed 3 functions + unused imports)
+- `orchestrator/app/config.py` (modified — removed github_webhook_secret)
+- `orchestrator/app/db.py` (modified — removed project_item_id column)
+- `orchestrator/app/main.py` (modified — removed webhook router)
+- `orchestrator/app/state_machine.py` (modified — updated docstrings)
+- `orchestrator/tests/test_state_machine.py` (modified — updated docstrings)
+- `docker-compose.yml` (modified — removed GITHUB_WEBHOOK_SECRET)
+- `docs/ARCHITECTURE.md` (modified)
+- `docs/PHASE_2.md` (modified)
+- `docs/REFACTOR_POLLING.md` (modified)
+- `CHANGELOG.md` (appended this entry)
+
+**How it was verified:**
+- All remaining tests pass (62 existing + 16 poller tests = 59 tests after removing 19 webhook tests)
+- No code references webhook.py, verify_signature, or any removed symbols
+
+**What the next phase needs to know:**
+- There is NO webhook endpoint — polling is the only trigger
+- `GITHUB_WEBHOOK_SECRET` is no longer a config setting
+- The only env vars needed are: `DEVIN_API_KEY`, `DEVIN_ORG_ID`, `GITHUB_TOKEN` (plus optional `POLL_INTERVAL_SECONDS`, `POLLING_ENABLED`)

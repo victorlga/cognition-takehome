@@ -26,7 +26,7 @@ Select 3–5 high-quality security issues and high-impact bugs from Apache Super
 - The system is framed as a **Vulnerability Remediation System**, but "vulnerability" is interpreted broadly: anything a security-minded engineering org would want fixed
 - Issues will be tracked on a **GitHub Projects v2 kanban board** on the fork
 - The board has columns: **Backlog, Planning, Building, Reviewing, Done**
-- The board drives the orchestrator via `projects_v2_item` webhooks
+- The board is used for visual tracking; the orchestrator is driven by **polling for `state:*` labels** on issues
 - The demo audience is a VP of Engineering + senior ICs — **technical depth + business impact matter**
 - **The remediated issues are the on-screen proof that the system works.** Trivial picks tank the entire demo.
 
@@ -177,21 +177,18 @@ gh project item-add <project-number> --owner victorlga --url <issue-url>
 
 Configure the Status field with the required columns. Add all issues to the Backlog column.
 
-### Step 7: Configure Webhook
+### Step 7: Verify Labels for Polling
 
-Set up a webhook on `victorlga/superset` for `projects_v2_item` events. The webhook URL will be configured in Phase 2 — for now, document the webhook secret and note that it needs to be pointed at the orchestrator's `/webhooks/github` endpoint.
+The orchestrator uses **polling** as its primary trigger — no webhook setup is required. Ensure the `state:planning`, `state:building`, `state:reviewing`, and `state:done` labels exist on the fork so they can be applied to issues when the pipeline advances.
 
 ```bash
-# Generate webhook secret
-python3 -c "import secrets; print(secrets.token_hex(32))"
-
-# Create webhook (URL will be updated in Phase 2)
-gh api repos/victorlga/superset/hooks -f name=web \
-  -f 'config[url]=https://placeholder.localhost.run/webhooks/github' \
-  -f 'config[content_type]=json' \
-  -f 'config[secret]=<generated-secret>' \
-  -f 'events[]=projects_v2_item'
+# Create state labels on the fork (if they don't already exist)
+for label in state:planning state:building state:reviewing state:done; do
+  gh label create "$label" --repo victorlga/superset --color 0E8A16 --force
+done
 ```
+
+> **Note:** A webhook is preserved as an optional secondary trigger for production use, but is **not required** for the demo flow. `docker compose up` works out of the box with polling.
 
 ### Step 8: Verify
 
@@ -208,7 +205,7 @@ gh api repos/victorlga/superset/hooks -f name=web \
 - [ ] Issues created on `victorlga/superset` with original content and backlinks
 - [ ] GitHub Project board "Vulnerability Remediation" with columns: Backlog, Planning, Building, Reviewing, Done
 - [ ] All issues in Backlog column
-- [ ] Webhook configured (URL placeholder, secret generated)
+- [ ] State labels created on the fork (`state:planning`, `state:building`, `state:reviewing`, `state:done`)
 - [ ] Verification output: issue URLs + board state
 
 ---
@@ -228,7 +225,7 @@ gh api repos/victorlga/superset/hooks -f name=web \
 - 3–5 issues created on `victorlga/superset` that clear the difficulty bar
 - GitHub Project board created and populated
 - Selection rationale documented with rejected candidates
-- Webhook configured (URL to be updated in Phase 2)
+- State labels created for polling-based trigger
 
 ---
 

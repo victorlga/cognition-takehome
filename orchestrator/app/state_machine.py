@@ -1,8 +1,9 @@
 """Issue state machine — maps status transitions to Devin session creation.
 
 The state machine is driven by **issue label transitions** (``state:*``
-labels) rather than ``projects_v2_item`` webhooks, because the latter are
-not supported on repository-level webhooks for user-owned repos.
+labels) discovered via the background poller (see ``poller.py``).
+The poller periodically fetches issues and delegates here when a
+label-derived state differs from the DB state.
 """
 
 from __future__ import annotations
@@ -47,8 +48,8 @@ async def handle_status_change(
 ) -> dict[str, Any]:
     """Main entry point: react to a label-driven status change on an issue.
 
-    Issue metadata is provided directly from the webhook payload, removing
-    the need for a GraphQL round-trip to resolve a ``content_node_id``.
+    Issue metadata is provided directly from the poller (or any other
+    trigger) — no GraphQL round-trip needed.
 
     Returns a dict summarising the action taken.
     """

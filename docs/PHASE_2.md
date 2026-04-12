@@ -10,7 +10,7 @@
 
 ## Goal
 
-Build the FastAPI orchestrator that receives GitHub webhooks, manages issue state, and spawns Devin sessions (planner / builder / reviewer) via the Devin API v3.
+Build the FastAPI orchestrator that **polls for issue label changes**, manages issue state, and spawns Devin sessions (planner / builder / reviewer) via the Devin API v3.
 
 ---
 
@@ -28,7 +28,7 @@ Build the FastAPI orchestrator that receives GitHub webhooks, manages issue stat
 - **FastAPI** (Python 3.12) with `httpx` for async HTTP
 - **SQLite** via `aiosqlite` for persistence
 - **Docker Compose** for deployment
-- **Issue label transitions** (`state:planning`, `state:building`, etc.) as primary trigger — `projects_v2_item` webhooks are not supported on repo-level webhooks for user-owned repos (GitHub returns 422)
+- **Polling** for `state:*` labels as the **primary trigger** — a background `asyncio` task polls the GitHub API every N seconds. This eliminates the need for a publicly-reachable URL, so `docker compose up` just works.
 - The GitHub Projects v2 board is still used for visual kanban tracking but does not drive the state machine
 - Prompt templates for planner/builder/reviewer defined in `ARCHITECTURE.md`
 - DB schema defined in `ARCHITECTURE.md`
@@ -65,7 +65,7 @@ orchestrator/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
-│   ├── webhook.py
+│   ├── poller.py
 │   ├── devin_client.py
 │   ├── github_client.py
 │   ├── state_machine.py
@@ -103,10 +103,11 @@ class Settings(BaseSettings):
     devin_api_key: str          # DEVIN_API_KEY
     devin_org_id: str           # DEVIN_ORG_ID
     github_token: str           # GITHUB_TOKEN
-    github_webhook_secret: str  # GITHUB_WEBHOOK_SECRET
     github_repo: str = "victorlga/superset"
     database_url: str = "sqlite+aiosqlite:///./data/orchestrator.db"
     devin_api_base: str = "https://api.devin.ai/v3"
+    poll_interval_seconds: int = 30
+    polling_enabled: bool = True
 ```
 
 ### Step 3: Implement `db.py`
@@ -141,10 +142,10 @@ class DevinClient:
 ### Step 5: Implement `github_client.py`
 
 Wrap the GitHub API for:
-- Resolving project item `content_node_id` to issue details (GraphQL)
+- Listing issues with specific labels (for the poller)
 - Reading issue body and comments
 - Posting issue comments (planner output)
-- Reading the Status field value from webhook payload
+- Managing `state:*` labels on issues
 - Creating labels on the fork if missing
 
 ### Step 6: Implement `prompts.py`
@@ -163,27 +164,28 @@ State transition logic:
 - Updates `issue_state` table
 - Spawns appropriate Devin session via `devin_client`
 
-### Step 8: Implement `webhook.py`
+### Step 8: Implement `poller.py` (Primary Trigger)
 
-FastAPI router for the webhook endpoint:
+Polling-based state machine driver:
 
 ```python
-@router.post("/webhooks/github")
-async def github_webhook(request: Request):
-    # 1. Verify HMAC-SHA256 signature
-    # 2. Parse event type from X-GitHub-Event header
-    # 3. Handle issues.labeled events (state:* labels)
-    # 4. Extract status from label name
-    # 5. Delegate to state_machine.handle_status_change()
-    # 6. Return 200 OK
+async def extract_state_from_labels(labels: list[dict]) -> str | None:
+    """Derive pipeline state from an issue's label list."""
+
+async def poll_once(github=None, devin=None) -> list[dict]:
+    """Single poll cycle: fetch issues, compare DB state, fire transitions."""
+
+async def start_polling_loop() -> None:
+    """Infinite loop calling poll_once every N seconds."""
 ```
 
 ### Step 9: Implement `main.py`
 
 FastAPI application setup:
-- Include webhook router
 - Include dashboard router
 - Initialize database on startup
+- **Start background poller on startup** (if `POLLING_ENABLED=true`)
+- Cancel poller on shutdown
 - Health check at `GET /health`
 - CORS middleware (for dashboard)
 
@@ -220,7 +222,8 @@ services:
       - DEVIN_API_KEY=${DEVIN_API_KEY}
       - DEVIN_ORG_ID=${DEVIN_ORG_ID}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-30}
+      - POLLING_ENABLED=${POLLING_ENABLED:-true}
     volumes:
       - ./data:/app/data
 ```
@@ -234,12 +237,8 @@ docker compose up --build -d
 # Health check
 curl http://localhost:8000/health
 
-# Test webhook with a mock payload (label-based trigger)
-curl -X POST http://localhost:8000/webhooks/github \
-  -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: issues" \
-  -H "X-Hub-Signature-256: sha256=<computed>" \
-  -d '{"action": "labeled", "label": {"name": "state:planning"}, "issue": {"number": 1, "title": "Test issue", "body": "...", "html_url": "https://github.com/victorlga/superset/issues/1", "node_id": "I_test"}}'
+# The poller starts automatically — check logs for "Poller started"
+docker compose logs -f orchestrator
 
 # Check metrics stub
 curl http://localhost:8000/api/metrics
@@ -248,7 +247,7 @@ curl http://localhost:8000/api/metrics
 ### Step 15: Write Unit Tests
 
 Create `orchestrator/tests/` with:
-- `test_webhook.py` — HMAC verification, payload parsing, event routing
+- `test_poller.py` — polling logic, label extraction, transition detection
 - `test_state_machine.py` — state transitions, invalid transition rejection
 - `test_devin_client.py` — session creation (mocked), polling logic
 - `test_prompts.py` — prompt template rendering
@@ -262,7 +261,7 @@ Run with: `python -m pytest orchestrator/tests/ -v`
 - [ ] `orchestrator/` directory with all source files
 - [ ] `Dockerfile` that builds cleanly
 - [ ] `docker-compose.yml` at repo root
-- [ ] Webhook endpoint that verifies HMAC and parses `issues` events with `state:*` labels
+- [ ] Polling-based trigger that detects `state:*` label changes on issues
 - [ ] Devin API client that can create sessions, poll status, send messages
 - [ ] State machine with SQLite persistence
 - [ ] Prompt templates for planner/builder/reviewer
@@ -276,17 +275,16 @@ Run with: `python -m pytest orchestrator/tests/ -v`
 
 1. `docker compose up --build` starts without errors
 2. `curl http://localhost:8000/health` returns `{"status": "ok"}`
-3. Webhook endpoint rejects requests with invalid HMAC signatures (returns 401)
-4. Webhook endpoint accepts valid payloads and logs state transitions
-5. Unit tests pass: `python -m pytest orchestrator/tests/ -v`
-6. `curl http://localhost:8000/api/metrics` returns valid JSON
+3. Poller starts automatically and logs "Poller started — polling every 30 seconds"
+4. Unit tests pass: `python -m pytest orchestrator/tests/ -v`
+5. `curl http://localhost:8000/api/metrics` returns valid JSON
 
 ---
 
 ## Definition of Done
 
-- `docker compose up` starts the orchestrator successfully
-- Webhook endpoint accepts and verifies GitHub payloads
+- `docker compose up` starts the orchestrator with polling enabled (zero webhook setup needed)
+- Poller detects label changes and triggers state transitions
 - Devin sessions can be created via the API client (verified with a real test call if API key is available, otherwise mocked)
 - State transitions logged to SQLite
 - All unit tests pass
@@ -301,7 +299,7 @@ Run with: `python -m pytest orchestrator/tests/ -v`
 
 **What changed:**
 - Built FastAPI orchestrator in `orchestrator/` directory
-- Implemented webhook receiver with HMAC verification
+- Implemented polling-based trigger for `state:*` label detection
 - Implemented Devin API v3 client (sessions, polling, messaging)
 - Implemented state machine with SQLite persistence
 - Created Docker Compose configuration
@@ -316,13 +314,13 @@ Run with: `python -m pytest orchestrator/tests/ -v`
 **How it was verified:**
 - Docker Compose builds and starts cleanly
 - Health check returns 200
-- Webhook accepts valid payloads, rejects invalid signatures
+- Poller detects label changes and triggers transitions
 - Unit tests pass with >80% coverage
 - Metrics endpoint returns valid JSON
 
 **What the next phase needs to know:**
 - Orchestrator runs on port 8000
-- Webhook endpoint: POST /webhooks/github
+- Poller runs as background task (primary trigger, interval configurable via POLL_INTERVAL_SECONDS)
 - Dashboard endpoint: GET /dashboard (stub, full in Phase 4)
 - Metrics API: GET /api/metrics
 - Database file: data/orchestrator.db

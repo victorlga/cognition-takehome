@@ -9,7 +9,7 @@
 
 ## Project Summary
 
-Build an **event-driven vulnerability remediation system** that uses the **Devin API** to automatically plan, fix, review, and land security/bug fixes on a fork of [Apache Superset](https://github.com/apache/superset). Triggered by GitHub Project board movements, orchestrated by a FastAPI backend, observable via a lightweight dashboard.
+Build an **event-driven vulnerability remediation system** that uses the **Devin API** to automatically plan, fix, review, and land security/bug fixes on a fork of [Apache Superset](https://github.com/apache/superset). Triggered by **polling for issue label changes** (no webhook/tunnel setup needed), orchestrated by a FastAPI backend, observable via a lightweight dashboard.
 
 **Deliverables** (from `TAKEHOME.md`):
 1. Working Dockerized system
@@ -27,7 +27,7 @@ Build an **event-driven vulnerability remediation system** that uses the **Devin
 |-------|------|------------|-----------------|---------------------|------------|
 | 0 | Planning & Scaffolding | — | N/A (this session) | 1 session | Docs, playbook, machine config |
 | 1 | Issue Selection & Seeding | Phase 0 | No | 1 session | 3–5 issues on fork, kanban board |
-| 2 | Orchestrator Backend | Phase 0 | Yes (parallel w/ Phase 1) | 1–2 sessions | Working FastAPI app in Docker |
+| 2 | Orchestrator Backend | Phase 0 | Yes (parallel w/ Phase 1) | 1–2 sessions | Working FastAPI app in Docker (polling-based) |
 | 3 | Issue Remediation | Phase 1 + Phase 2 | Yes (sub-phases per issue) | 3–5 sessions | PRs with fixes on fork |
 | 4 | Observability Dashboard | Phase 2 | No | 1 session | Dashboard at `/dashboard` |
 | 5 | Integration Test & Demo Prep | Phase 3 + Phase 4 | No | 1 session | End-to-end verification |
@@ -93,21 +93,22 @@ See [`PHASE_1.md`](./PHASE_1.md) for the full prompt.
 
 ### Phase 2 — Orchestrator Backend
 
-**Goal:** Build the FastAPI orchestrator that receives webhooks, manages state, and spawns Devin sessions.
+**Goal:** Build the FastAPI orchestrator that polls for label changes, manages state, and spawns Devin sessions.
 
 **Depends on:** Phase 0 complete. Can run in parallel with Phase 1.
 
 **Deliverables:**
 - `orchestrator/` directory with all source code
 - `Dockerfile` and `docker-compose.yml`
-- Webhook endpoint (`POST /webhooks/github`)
+- Polling-based trigger (background `asyncio` task) as primary trigger
+- Webhook endpoint (`POST /webhooks/github`) as optional secondary trigger
 - Devin API client (create session, poll status, send message)
 - State machine (SQLite-backed)
 - Prompt templates for planner/builder/reviewer
 - Health check endpoint (`GET /health`)
 - API endpoint for metrics (`GET /api/metrics`)
 
-**Definition of Done:** `docker compose up` starts the orchestrator. Webhook endpoint accepts and verifies GitHub payloads. Devin sessions can be created via the API client. State transitions logged to SQLite.
+**Definition of Done:** `docker compose up` starts the orchestrator with polling enabled. Poller detects label changes and triggers state transitions. Devin sessions can be created via the API client. State transitions logged to SQLite.
 
 See [`PHASE_2.md`](./PHASE_2.md) for the full prompt.
 
@@ -169,7 +170,7 @@ See [`PHASE_4.md`](./PHASE_4.md) for the full prompt.
 - Docker Compose verified on a clean machine
 - Screenshots of dashboard, project board, and PRs for the Loom
 
-**Definition of Done:** A fresh `docker compose up` + webhook delivery triggers the full pipeline. README is clear enough for a reviewer to reproduce.
+**Definition of Done:** A fresh `docker compose up` starts the poller, which detects label changes and triggers the full pipeline. README is clear enough for a reviewer to reproduce. No webhook, tunnel, or external setup needed.
 
 See [`PHASE_5.md`](./PHASE_5.md) for the full prompt.
 
