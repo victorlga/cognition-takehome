@@ -32,6 +32,15 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 for _status in list(VALID_TRANSITIONS):
     VALID_TRANSITIONS[_status].add("error")
 
+# Maps the incoming status to the issue_state column holding the previous
+# stage's Devin session ID.  Used to finalize old sessions when the
+# pipeline advances.
+_PREV_SESSION_COLUMN: dict[str, str] = {
+    "building": "planner_session",
+    "reviewing": "builder_session",
+    "done": "reviewer_session",
+}
+
 
 def is_valid_transition(old_status: str, new_status: str) -> bool:
     """Check whether a status transition is allowed."""
@@ -102,6 +111,19 @@ async def handle_status_change(
         "title": issue_title,
         "status": new_status_lower,
     }
+
+    # Finalize the previous stage's session so it stops showing as
+    # "active" on the dashboard.  The WHERE finished_at IS NULL guard
+    # inside update_session_log makes this idempotent.
+    prev_col = _PREV_SESSION_COLUMN.get(new_status_lower)
+    if prev_col and existing:
+        prev_session_id = existing.get(prev_col)
+        if prev_session_id:
+            await db.update_session_log(prev_session_id, "completed")
+            logger.info(
+                "Finalized previous session %s for issue #%d on transition to %s",
+                prev_session_id, issue_number, new_status_lower,
+            )
 
     # Handle each transition
     if new_status_lower == "planning":

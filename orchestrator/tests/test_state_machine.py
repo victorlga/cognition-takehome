@@ -232,3 +232,56 @@ class TestHandleStatusChange:
         assert result["action"] == "transitioned"
         assert result["new_status"] == "planning"
         gh.set_state_label.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_building_transition_finalizes_planner_session(self, mock_devin, mock_github):
+        """When transitioning planning -> building, the planner session_log
+        should be marked 'completed' so it no longer shows as active."""
+        # Seed a planning issue with a planner session
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="planning",
+            planner_session="sess-planner-1",
+        )
+        await db.insert_session_log(42, "sess-planner-1", "planner")
+
+        # Transition to building
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="Building",
+            devin=mock_devin,
+            github=mock_github,
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "transitioned"
+        assert result["new_status"] == "building"
+
+        # The planner session should now be completed
+        logs = await db.list_session_logs(issue_id=42)
+        planner_log = next(l for l in logs if l["session_id"] == "sess-planner-1")
+        assert planner_log["status"] == "completed"
+        assert planner_log["finished_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_done_transition_finalizes_reviewer_session(self, mock_devin, mock_github):
+        """When transitioning reviewing -> done, the reviewer session_log
+        should be marked 'completed'."""
+        await db.upsert_issue(
+            42, issue_node_id="I_node_1", status="reviewing",
+            reviewer_session="sess-reviewer-1",
+        )
+        await db.insert_session_log(42, "sess-reviewer-1", "reviewer")
+
+        result = await handle_status_change(
+            issue_number=42,
+            new_status="Done",
+            devin=mock_devin,
+            github=mock_github,
+            **_ISSUE_KWARGS,
+        )
+
+        assert result["action"] == "transitioned"
+
+        logs = await db.list_session_logs(issue_id=42)
+        reviewer_log = next(l for l in logs if l["session_id"] == "sess-reviewer-1")
+        assert reviewer_log["status"] == "completed"

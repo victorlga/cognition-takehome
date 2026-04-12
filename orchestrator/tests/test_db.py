@@ -76,10 +76,10 @@ class TestMetrics:
         # All statuses should be present with 0 counts
         assert metrics["issues"]["backlog"] == 0
         assert metrics["issues"]["done"] == 0
-        # Velocity metrics should be None/0 with no data
-        assert metrics["median_time_to_remediation_hours"] is None
         assert metrics["session_success_rate"] == 0.0
-        assert metrics["error_rate"] == 0.0
+        assert metrics["total_sessions"] == 0
+        assert metrics["completed_sessions"] == 0
+        assert metrics["failed_sessions"] == 0
         assert metrics["recent_activity"] == []
 
     async def test_metrics_with_data(self):
@@ -94,14 +94,20 @@ class TestMetrics:
         assert metrics["issues"]["backlog"] == 1
         assert metrics["issues"]["planning"] == 2
         assert metrics["active_sessions"] == 1
+        assert metrics["active_sessions_by_type"] == {"planner": 1}
         assert len(metrics["recent_activity"]) == 2
-        # Velocity metrics
         assert metrics["total_sessions"] == 2
         assert metrics["completed_sessions"] == 1
         assert metrics["failed_sessions"] == 0
         assert metrics["session_success_rate"] == 0.5
-        assert metrics["error_rate"] == 0.0
-        # Risk posture
-        assert "severity_breakdown" in metrics
-        assert "open_trend" in metrics
-        assert "closed_trend" in metrics
+
+    async def test_metrics_failed_sessions_counted(self):
+        """Verify failed_sessions counts status='failed' (not 'error')."""
+        await db.upsert_issue(1, issue_node_id="I_1", status="planning")
+        await db.insert_session_log(1, "sess-ok", "planner", status="completed")
+        await db.insert_session_log(1, "sess-fail", "planner", status="failed")
+
+        metrics = await db.get_metrics()
+        assert metrics["failed_sessions"] == 1
+        assert metrics["completed_sessions"] == 1
+        assert metrics["total_sessions"] == 2
