@@ -59,11 +59,13 @@ The orchestrator starts on **http://localhost:8000** with:
 
 ### 4. Seed sample data (optional)
 
-To populate the dashboard with sample data for demonstration:
+The orchestrator populates the dashboard with real data as it processes issues through the pipeline. However, if you want to preview the dashboard without configuring valid API keys or waiting for real issues to be processed, you can insert synthetic sample data:
 
 ```bash
 docker compose exec orchestrator python -m scripts.seed_sample_data
 ```
+
+This inserts fake issue records and session logs directly into SQLite so you can explore the dashboard charts, metrics, and activity feed immediately.
 
 ---
 
