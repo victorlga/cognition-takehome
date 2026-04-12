@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -9,7 +10,9 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.db import init_db
+from app.poller import start_polling_loop
 from app.webhook import router as webhook_router
 from app.dashboard import router as dashboard_router
 
@@ -22,11 +25,27 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Initialise the database on startup."""
+    """Initialise the database and start the background poller."""
     logger.info("Initialising database …")
     await init_db()
     logger.info("Database ready.")
+
+    poll_task: asyncio.Task[None] | None = None
+    if settings.polling_enabled:
+        logger.info("Starting background poller (interval=%ds) …", settings.poll_interval_seconds)
+        poll_task = asyncio.create_task(start_polling_loop())
+    else:
+        logger.info("Polling disabled — webhook-only mode.")
+
     yield
+
+    if poll_task is not None and not poll_task.done():
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Poller stopped.")
 
 
 app = FastAPI(

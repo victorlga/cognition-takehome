@@ -53,14 +53,14 @@ curl http://localhost:8000/health
 Simulate the full workflow:
 
 1. **Create a test issue** on the fork (or use an existing remediated issue)
-2. **Move it to Planning** on the project board
-3. **Verify** the orchestrator receives the webhook and spawns a planner session
+2. **Apply `state:planning` label** — the poller detects this within one poll cycle
+3. **Verify** the orchestrator triggers a planner session
 4. **Check** the planner posts a plan as an issue comment
-5. **Move to Building** → verify builder session spawns → PR opens
-6. **Move to Reviewing** → verify reviewer session spawns → review posted
-7. **Move to Done** → verify metrics update
+5. **Apply `state:building` label** → verify builder session spawns → PR opens
+6. **Apply `state:reviewing` label** → verify reviewer session spawns → review posted
+7. **Apply `state:done` label** → verify metrics update
 
-If the full webhook flow isn't working end-to-end, document what works and what requires manual intervention. The demo should show the orchestrator in action even if some steps need a nudge.
+If the full polling flow isn't working end-to-end, document what works and what requires manual intervention. The demo should show the orchestrator in action even if some steps need a nudge.
 
 ### Step 3: Verify Dashboard with Real Data
 
@@ -105,8 +105,9 @@ review, and land security fixes on Apache Superset.
 1. Clone this repo
 2. Copy `.env.example` to `.env` and fill in secrets
 3. `docker compose up --build`
-4. Configure webhook on your GitHub repo to point to `<host>:8000/webhooks/github`
-5. Move an issue to "Planning" on the project board
+4. Apply a `state:planning` label to an issue — the poller picks it up automatically
+
+> **Note:** No webhook, tunnel, or public URL is needed. The orchestrator polls the GitHub API for label changes.
 
 ## How It Works
 [Brief description of the kanban → Devin session flow]
@@ -137,7 +138,7 @@ GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
 - [ ] `docker compose up --build` works from a clean state
 - [ ] Health check passes
-- [ ] Webhook receives and processes events
+- [ ] Poller detects label changes and triggers state transitions
 - [ ] Dashboard shows real metrics
 - [ ] All remediation PRs are merged on the fork
 - [ ] Project board is in final state

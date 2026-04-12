@@ -21,7 +21,8 @@ flowchart TB
     end
 
     subgraph Orchestrator ["Orchestrator (FastAPI + Docker)"]
-        Webhook["Webhook Receiver\n/webhooks/github"]
+        Poller["Poller\n(background task)"]
+        Webhook["Webhook Receiver\n/webhooks/github\n(optional)"]
         SM["State Machine\n(per-issue)"]
         DevinClient["Devin API Client"]
         DB["SQLite DB\n(state + metrics)"]
@@ -36,9 +37,11 @@ flowchart TB
         ScannerSession["Scanner Devin Session"]
     end
 
-    %% Event flow
-    Issues -- "issues.labeled\n(state:* label applied)" --> Webhook
-    Webhook --> SM
+    %% Event flow (polling is primary, webhook is optional)
+    Issues -- "poll: list issues\nwith state:* labels" --> Poller
+    Poller --> SM
+    Issues -. "issues.labeled\n(optional webhook)" .-> Webhook
+    Webhook -.-> SM
     SM -- "Backlog → Planning" --> DevinClient
     DevinClient -- "create session\n(planner prompt)" --> PlannerSession
     PlannerSession -- "posts plan as\nissue comment" --> Issues
@@ -71,8 +74,8 @@ flowchart TB
 |---|---|---|
 | **Orchestrator** | Python 3.12 + FastAPI | Fastest path to a working webhook receiver + API client. Python is Superset's own language, so the reviewer audience is familiar. `httpx` for async Devin API calls. |
 | **Persistence** | SQLite (via `aiosqlite`) | Zero-ops, single-file, sufficient for demo-scale state. Easily inspectable for the Loom walkthrough. |
-| **Containerization** | Docker Compose | Single `docker compose up` to run the orchestrator, expose the webhook endpoint, and (optionally) the dashboard. Required by the take-home spec. |
-| **Webhook Tunnel** | [localhost.run](https://localhost.run) (dev) | GitHub webhooks need a public URL. Zero-signup SSH tunnel: `ssh -R 80:localhost:8000 nokey@localhost.run`. No account or token required. |
+| **Containerization** | Docker Compose | Single `docker compose up` to run the orchestrator and dashboard. Zero additional configuration needed beyond env vars. Required by the take-home spec. |
+| **Polling** | Background `asyncio` task | Polls the GitHub API every N seconds for `state:*` label changes. Eliminates the need for a publicly-reachable webhook endpoint — `docker compose up` just works. |
 | **Devin API** | v3 REST (`https://api.devin.ai/v3/`) | Latest API with RBAC, session attribution, playbook attachment, and structured polling. |
 | **Dashboard** | FastAPI + Jinja2 + htmx | Minimal single-page dashboard served by the same FastAPI process. No separate frontend build step. Answers "how would an engineering leader know this is working?" |
 | **Scanning** | `pip-audit`, `bandit`, `semgrep`, `npm audit` | Industry-standard tools. Results feed into issue creation. |
@@ -82,41 +85,33 @@ flowchart TB
 
 ## Event Flow — Detailed
 
-### Primary Trigger: Issue Label Transitions
+### Primary Trigger: Polling-Based Label Detection
 
-> **Note:** GitHub Projects v2 `projects_v2_item` webhooks are **not supported** on repository-level webhooks for user-owned repos (GitHub returns 422). The system uses **issue label transitions** as the primary trigger instead.
+> **Design choice:** The orchestrator uses **polling** as the primary trigger instead of webhooks. This eliminates the need for a publicly-reachable URL, so `docker compose up` works out of the box with zero tunnel or deploy setup.
 
-When a `state:*` label (e.g., `state:planning`, `state:building`) is applied to an issue, the `issues` webhook fires with a `labeled` action. The orchestrator extracts the status from the label name and maps it to a Devin session type:
+A background `asyncio` task polls the GitHub API every N seconds (default: 30) for open issues carrying the `remediation-target` label and any `state:*` label. For each issue, the poller extracts the state from the label name, compares it against the SQLite DB state, and fires a transition when they differ.
 
-| Status Transition | Orchestrator Action | Devin Session Type |
+| Label Detected | Transition | Devin Session Type |
 |---|---|---|
-| `Backlog → Planning` | Spawn planner | **Planner**: reads the issue, researches the codebase, posts a remediation plan as an issue comment |
-| `Planning → Building` | Spawn builder(s) | **Builder**: executes the approved plan, writes code, opens a PR |
-| `Building → Reviewing` | Spawn reviewer | **Reviewer**: reviews the PR, runs tests, iterates with builder until CI is green |
-| `Reviewing → Done` | Log completion | Human merges the PR; orchestrator records metrics |
+| `state:planning` | Backlog → Planning | **Planner**: reads the issue, researches the codebase, posts a remediation plan as an issue comment |
+| `state:building` | Planning → Building | **Builder**: executes the approved plan, writes code, opens a PR |
+| `state:reviewing` | Building → Reviewing | **Reviewer**: reviews the PR, runs tests, iterates with builder until CI is green |
+| `state:done` | Reviewing → Done | Log completion — orchestrator records metrics |
 
-**Webhook payload structure** (abbreviated):
-```json
-{
-  "action": "labeled",
-  "label": {
-    "name": "state:planning"
-  },
-  "issue": {
-    "number": 1,
-    "title": "Session cookies not invalidated on logout",
-    "body": "...",
-    "html_url": "https://github.com/victorlga/superset/issues/1",
-    "node_id": "I_..."
-  }
-}
-```
+**Polling flow:**
+1. `GET /repos/{repo}/issues?labels=remediation-target&state=open` (paginated)
+2. For each issue, extract `state:*` label → derive internal status
+3. Compare against `issue_state.status` in SQLite
+4. If different → delegate to `handle_status_change()` in the state machine
+5. If same → skip (idempotent, no duplicate transitions)
 
-The orchestrator reads issue metadata directly from the webhook payload (no GraphQL round-trip needed), then builds the Devin session prompt from the issue title, body, and URL.
+Duplicate triggers are no-ops because the poller always checks the DB state before firing. The state machine itself also validates transitions (no skipping states).
 
-### Webhook Setup
+### Optional: Webhook (Secondary Trigger)
 
-The orchestrator uses a webhook on `victorlga/superset` subscribing to `issues` events. The webhook secret is verified via HMAC-SHA256 on every request. When a `state:*` label is applied, the orchestrator processes the label change and triggers the corresponding state transition.
+The webhook endpoint (`POST /webhooks/github`) is preserved as an **optional** secondary trigger for production deployments where lower latency is desired. It handles `issues.labeled` events with HMAC-SHA256 verification. Webhooks require a publicly-reachable URL (via `localhost.run`, `ngrok`, or a cloud deploy).
+
+To use webhooks alongside polling, both can run simultaneously — the state machine is idempotent, so duplicate triggers from both paths are safely ignored.
 
 | Label Applied | Transition |
 |---|---|
@@ -284,8 +279,9 @@ All secrets are provided via environment variables. **Never hardcode.**
 | `DEVIN_API_KEY` | Devin API v3 token (from a **service user**, not the legacy API keys page) | [app.devin.ai](https://app.devin.ai) → Team Settings → Service Users → create a service user with Admin access → copy its API token | Orchestrator → Devin API |
 | `DEVIN_ORG_ID` | Devin organization ID | Shown on the service user page or in any Devin API response | Orchestrator → Devin API |
 | `GITHUB_TOKEN` | GitHub PAT with `repo`, `project`, `admin:org` scopes | GitHub → Settings → Developer Settings → PAT (fine-grained) | Orchestrator → GitHub API, `gh` CLI |
-| `GITHUB_WEBHOOK_SECRET` | HMAC secret for webhook signature verification | Self-generated: `openssl rand -hex 20` | Orchestrator webhook endpoint |
-| *(tunnel)* | localhost.run — no token needed | `ssh -R 80:localhost:8000 nokey@localhost.run` | Local development |
+| `GITHUB_WEBHOOK_SECRET` | HMAC secret for webhook signature verification (optional — only needed if using webhooks) | Self-generated: `openssl rand -hex 20` | Orchestrator webhook endpoint |
+| `POLL_INTERVAL_SECONDS` | Polling interval in seconds (default: 30) | Set in `.env` or `docker-compose.yml` | Poller background task |
+| `POLLING_ENABLED` | Enable/disable the background poller (default: true) | Set in `.env` or `docker-compose.yml` | Poller background task |
 
 > **Note:** The legacy "API Keys" page on Devin is deprecated. Use **Service Users** instead. A service user named `takehome` with Admin access has already been created for this project.
 
@@ -311,7 +307,8 @@ cognition-takehome/
 │   ├── app/
 │   │   ├── main.py          # FastAPI app entry
 │   │   ├── config.py        # Settings / env vars
-│   │   ├── webhook.py       # GitHub webhook handler
+│   │   ├── poller.py        # Polling-based state machine driver (primary trigger)
+│   │   ├── webhook.py       # GitHub webhook handler (optional secondary trigger)
 │   │   ├── devin_client.py  # Devin API v3 wrapper
 │   │   ├── github_client.py # GitHub API helper
 │   │   ├── state_machine.py # Issue state transitions
@@ -335,8 +332,8 @@ cognition-takehome/
 |---|---|---|---|
 | 1 | **FastAPI** over Node/Express | Express, Hono | Python matches Superset's ecosystem; FastAPI has native async, auto-docs, Pydantic validation. Faster to ship for a solo dev in 2-3 hours. |
 | 2 | **SQLite** over Postgres | Postgres, Redis | Zero-ops. Demo-scale data (< 100 rows). Single file = easy to inspect in Loom. No Docker service dependency. |
-| 3 | **Issue label transitions** as primary trigger | GitHub Projects v2 webhooks, manual API polling | `projects_v2_item` events are not supported on repo-level webhooks for user-owned repos (verified via API — GitHub returns 422). Label-based approach uses the `issues` webhook which is fully supported, and provides issue metadata directly in the payload (no GraphQL round-trip). |
-| 4 | ~~Issue labels as fallback~~ | ~~Drop fallback~~ | Labels are now the **primary** trigger (see decision #3). The Projects v2 board is still used for visual kanban tracking but does not drive the state machine. |
+| 3 | **Polling** as primary trigger | GitHub webhooks, GitHub Projects v2 webhooks | Polling eliminates the need for a publicly-reachable URL. `docker compose up` just works — zero tunnel, zero deploy, zero webhook config. The poller checks `state:*` labels on issues via the GitHub API every N seconds. Webhooks are preserved as an optional secondary trigger for production use. |
+| 4 | **Issue labels** as state encoding | GitHub Projects v2 status field | Labels are the source of truth for pipeline state. The Projects v2 board is still used for visual kanban tracking but does not drive the state machine. Labels are readable via both polling and webhooks. |
 | 5 | **Devin-as-primitive** for planner/builder/reviewer | Custom LLM calls, hand-written scripts | The take-home explicitly evaluates "leveraging Devin as a core primitive." Each role is a Devin session with a tailored prompt. |
 | 6 | **htmx dashboard** over React SPA | React, Streamlit, Grafana | Zero build step. Serves from the same FastAPI process. htmx gives reactivity without JS complexity. |
 | 7 | **Scheduled Devin** for periodic scans | Cron in orchestrator | Demonstrates another Devin API capability (scheduled sessions). Enriches the event-driven narrative. |

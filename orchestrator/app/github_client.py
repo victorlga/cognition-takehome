@@ -114,6 +114,39 @@ class GitHubClient:
         # Add the target label (idempotent — GitHub ignores duplicates)
         await self.add_labels(issue_number, [target_label])
 
+    async def list_issues_with_labels(
+        self, labels: list[str], state: str = "open",
+    ) -> list[dict[str, Any]]:
+        """Fetch issues that carry **all** of the given labels.
+
+        Uses ``GET /repos/{repo}/issues?labels=...&state=...``.
+        Returns the full issue JSON objects (number, title, body, labels, etc.).
+        Handles pagination automatically (up to 10 pages / 1 000 issues).
+        """
+        client = await self._get_client()
+        label_param = ",".join(labels)
+        all_issues: list[dict[str, Any]] = []
+        page = 1
+        while page <= 10:
+            resp = await client.get(
+                f"{GITHUB_API}/repos/{self.repo}/issues",
+                params={
+                    "labels": label_param,
+                    "state": state,
+                    "per_page": 100,
+                    "page": page,
+                },
+            )
+            resp.raise_for_status()
+            batch: list[dict[str, Any]] = resp.json()
+            if not batch:
+                break
+            all_issues.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return all_issues
+
     # -- GraphQL helpers -----------------------------------------------------
 
     async def resolve_issue_from_node_id(self, node_id: str) -> dict[str, Any] | None:

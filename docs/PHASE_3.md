@@ -53,20 +53,20 @@ gh project list --owner victorlga
 
 For each issue, the orchestrator drives the flow. You can either:
 
-**Option A: Use the orchestrator end-to-end** — Move the issue from Backlog → Planning on the GitHub Project board. The webhook fires, the orchestrator spawns a planner Devin session. Monitor and advance through each stage.
+**Option A: Use the orchestrator end-to-end** — Apply the `state:planning` label to the issue. The poller detects the label change and spawns a planner Devin session. Monitor and advance through each stage by applying the next `state:*` label.
 
 **Option B: Manual orchestration with Devin API** — If the orchestrator has bugs, fall back to manually creating Devin sessions via the API or via separate Devin session prompts. Document what worked and what didn't.
 
 ### Step 3: For Each Issue — Planning Stage
 
-1. Move issue to "Planning" column on the project board
-2. The orchestrator (or you manually) spawns a **Planner Devin session** with the planner prompt from `ARCHITECTURE.md`
+1. Apply the `state:planning` label to the issue (the poller will detect this within one poll cycle)
+2. The orchestrator spawns a **Planner Devin session** with the planner prompt from `ARCHITECTURE.md`
 3. Wait for the planner to post a remediation plan as an issue comment
 4. Review the plan for sanity. If it looks reasonable, proceed. If not, send a message to the planner session requesting revisions.
 
 ### Step 4: For Each Issue — Building Stage
 
-1. Move issue to "Building" column (this signals plan approval)
+1. Apply the `state:building` label to the issue (this signals plan approval)
 2. The orchestrator spawns a **Builder Devin session** with the builder prompt
 3. Wait for the builder to open a PR on `victorlga/superset`
 4. Verify the PR:
@@ -77,7 +77,7 @@ For each issue, the orchestrator drives the flow. You can either:
 
 ### Step 5: For Each Issue — Reviewing Stage
 
-1. Move issue to "Reviewing" column
+1. Apply the `state:reviewing` label to the issue
 2. The orchestrator spawns a **Reviewer Devin session** with the reviewer prompt
 3. Wait for the reviewer to post review comments
 4. If changes are requested, the reviewer should iterate with the builder (or a new builder session is spawned)
@@ -86,7 +86,7 @@ For each issue, the orchestrator drives the flow. You can either:
 ### Step 6: For Each Issue — Completion
 
 1. Human (Victor) merges the PR
-2. Move issue to "Done" column
+2. Apply the `state:done` label to the issue
 3. The orchestrator logs completion metrics
 
 ### Step 7: Handle Failures
@@ -196,7 +196,7 @@ For each remediated issue:
 **What the next phase needs to know:**
 - PR URLs: #X, #Y, #Z
 - Any issues that were skipped and why
-- Orchestrator performance observations (did webhooks work? session success rate?)
+- Orchestrator performance observations (did polling work? session success rate?)
 
 **Open questions / known gaps:**
 - [list any issues]
