@@ -5,7 +5,7 @@
 
 ## Overview
 
-An event-driven system that uses the **Devin API** as its core execution primitive to automatically plan, build, review, and land fixes for security vulnerabilities and high-impact bugs in [Apache Superset](https://github.com/apache/superset). The system is triggered by GitHub Project board movements and orchestrated by a lightweight FastAPI backend.
+An event-driven system that uses the **Devin API** as its core execution primitive to automatically plan, build, review, and land fixes for security vulnerabilities and high-impact bugs in [Apache Superset](https://github.com/apache/superset). The system is triggered by **issue label transitions** (`state:*` labels) and orchestrated by a lightweight FastAPI backend.
 
 ---
 
@@ -37,7 +37,7 @@ flowchart TB
     end
 
     %% Event flow
-    Project -- "projects_v2_item.edited\n(status field change)" --> Webhook
+    Issues -- "issues.labeled\n(state:* label applied)" --> Webhook
     Webhook --> SM
     SM -- "Backlog → Planning" --> DevinClient
     DevinClient -- "create session\n(planner prompt)" --> PlannerSession
@@ -82,9 +82,11 @@ flowchart TB
 
 ## Event Flow — Detailed
 
-### Primary Trigger: GitHub Projects v2 Webhooks
+### Primary Trigger: Issue Label Transitions
 
-GitHub Projects v2 fire `projects_v2_item` webhook events when item fields change. The **Status** field (which maps to kanban columns) triggers an `edited` action with `changes.field_value`. The orchestrator maps status transitions to Devin session types:
+> **Note:** GitHub Projects v2 `projects_v2_item` webhooks are **not supported** on repository-level webhooks for user-owned repos (GitHub returns 422). The system uses **issue label transitions** as the primary trigger instead.
+
+When a `state:*` label (e.g., `state:planning`, `state:building`) is applied to an issue, the `issues` webhook fires with a `labeled` action. The orchestrator extracts the status from the label name and maps it to a Devin session type:
 
 | Status Transition | Orchestrator Action | Devin Session Type |
 |---|---|---|
@@ -96,40 +98,32 @@ GitHub Projects v2 fire `projects_v2_item` webhook events when item fields chang
 **Webhook payload structure** (abbreviated):
 ```json
 {
-  "action": "edited",
-  "changes": {
-    "field_value": {
-      "field_node_id": "PVTSSF_...",
-      "field_type": "single_select"
-    }
+  "action": "labeled",
+  "label": {
+    "name": "state:planning"
   },
-  "projects_v2_item": {
-    "id": 12345,
-    "node_id": "PVTI_...",
-    "content_node_id": "I_...",
-    "content_type": "Issue"
+  "issue": {
+    "number": 1,
+    "title": "Session cookies not invalidated on logout",
+    "body": "...",
+    "html_url": "https://github.com/victorlga/superset/issues/1",
+    "node_id": "I_..."
   }
 }
 ```
 
-The orchestrator resolves `content_node_id` to the linked issue via the GitHub GraphQL API, then reads the issue body + comments to build the Devin session prompt.
+The orchestrator reads issue metadata directly from the webhook payload (no GraphQL round-trip needed), then builds the Devin session prompt from the issue title, body, and URL.
 
 ### Webhook Setup
 
-The orchestrator registers a webhook on `victorlga/superset` subscribing to `projects_v2_item` events. The webhook secret is verified via HMAC-SHA256 on every request.
+The orchestrator uses a webhook on `victorlga/superset` subscribing to `issues` events. The webhook secret is verified via HMAC-SHA256 on every request. When a `state:*` label is applied, the orchestrator processes the label change and triggers the corresponding state transition.
 
-### Fallback: Issue Labels
-
-If GitHub Projects v2 webhooks prove unreliable in practice (e.g., event delivery gaps, missing field metadata), the system falls back to **issue label transitions** as the state machine driver:
-
-| Label Applied | Equivalent Transition |
+| Label Applied | Transition |
 |---|---|
 | `state:planning` | Backlog → Planning |
 | `state:building` | Planning → Building |
 | `state:reviewing` | Building → Reviewing |
 | `state:done` | Reviewing → Done |
-
-The orchestrator would then subscribe to `issues` webhook events filtered by label changes. This fallback is documented but the primary path uses Projects v2.
 
 ### Secondary Trigger: Periodic Vulnerability Scan
 
@@ -341,8 +335,8 @@ cognition-takehome/
 |---|---|---|---|
 | 1 | **FastAPI** over Node/Express | Express, Hono | Python matches Superset's ecosystem; FastAPI has native async, auto-docs, Pydantic validation. Faster to ship for a solo dev in 2-3 hours. |
 | 2 | **SQLite** over Postgres | Postgres, Redis | Zero-ops. Demo-scale data (< 100 rows). Single file = easy to inspect in Loom. No Docker service dependency. |
-| 3 | **GitHub Projects v2 webhooks** as primary trigger | Issue labels, manual API polling | True event-driven architecture. Real kanban UX. Webhook payload includes field changes for status transitions. |
-| 4 | **Issue labels as fallback** | Drop fallback | Safety net if Projects v2 webhook delivery is flaky. Minimal extra code. |
+| 3 | **Issue label transitions** as primary trigger | GitHub Projects v2 webhooks, manual API polling | `projects_v2_item` events are not supported on repo-level webhooks for user-owned repos (verified via API — GitHub returns 422). Label-based approach uses the `issues` webhook which is fully supported, and provides issue metadata directly in the payload (no GraphQL round-trip). |
+| 4 | ~~Issue labels as fallback~~ | ~~Drop fallback~~ | Labels are now the **primary** trigger (see decision #3). The Projects v2 board is still used for visual kanban tracking but does not drive the state machine. |
 | 5 | **Devin-as-primitive** for planner/builder/reviewer | Custom LLM calls, hand-written scripts | The take-home explicitly evaluates "leveraging Devin as a core primitive." Each role is a Devin session with a tailored prompt. |
 | 6 | **htmx dashboard** over React SPA | React, Streamlit, Grafana | Zero build step. Serves from the same FastAPI process. htmx gives reactivity without JS complexity. |
 | 7 | **Scheduled Devin** for periodic scans | Cron in orchestrator | Demonstrates another Devin API capability (scheduled sessions). Enriches the event-driven narrative. |

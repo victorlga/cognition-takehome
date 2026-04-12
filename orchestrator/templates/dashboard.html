@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulnerability Remediation Dashboard</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 2rem; background: #f8f9fa; }
+    h1 { color: #1a1a2e; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.12); margin-bottom: 1rem; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .metric-value { font-size: 2rem; font-weight: bold; color: #0d6efd; }
+    .metric-label { color: #6c757d; font-size: 0.875rem; }
+    a { color: #0d6efd; }
+    p.stub { color: #6c757d; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Vulnerability Remediation Dashboard</h1>
+  <p class="stub">Full interactive dashboard coming in Phase 4. This is a placeholder template.</p>
+
+  <div class="metrics-grid">
+    <div class="card">
+      <div class="metric-value" id="total-issues">—</div>
+      <div class="metric-label">Total Issues</div>
+    </div>
+    <div class="card">
+      <div class="metric-value" id="active-sessions">—</div>
+      <div class="metric-label">Active Sessions</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem;">
+    <h3>Quick Links</h3>
+    <ul>
+      <li><a href="/health">Health Check</a></li>
+      <li><a href="/api/metrics">Raw Metrics (JSON)</a></li>
+    </ul>
+  </div>
+
+  <script>
+    async function loadMetrics() {
+      try {
+        const resp = await fetch('/api/metrics');
+        const data = await resp.json();
+        document.getElementById('total-issues').textContent = data.total_issues ?? '—';
+        document.getElementById('active-sessions').textContent = data.active_sessions ?? '—';
+      } catch (e) {
+        console.error('Failed to load metrics', e);
+      }
+    }
+    loadMetrics();
+    setInterval(loadMetrics, 30000);
+  </script>
+</body>
+</html>
