@@ -1,4 +1,9 @@
-"""Issue state machine — maps status transitions to Devin session creation."""
+"""Issue state machine — maps status transitions to Devin session creation.
+
+The state machine is driven by **issue label transitions** (``state:*``
+labels) rather than ``projects_v2_item`` webhooks, because the latter are
+not supported on repository-level webhooks for user-owned repos.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,6 @@ from typing import Any
 from app import db
 from app.db import now_utc
 from app.devin_client import DevinClient
-from app.github_client import GitHubClient
 from app.prompts import IssueContext, build_builder_prompt, build_planner_prompt, build_reviewer_prompt
 
 logger = logging.getLogger(__name__)
@@ -33,35 +37,28 @@ def is_valid_transition(old_status: str, new_status: str) -> bool:
 
 
 async def handle_status_change(
-    content_node_id: str,
+    issue_number: int,
     new_status: str,
-    project_item_id: int | None = None,
+    issue_title: str = "",
+    issue_body: str = "",
+    issue_url: str = "",
+    issue_node_id: str = "",
     devin: DevinClient | None = None,
-    github: GitHubClient | None = None,
 ) -> dict[str, Any]:
-    """Main entry point: react to a status field change on the project board.
+    """Main entry point: react to a label-driven status change on an issue.
+
+    Issue metadata is provided directly from the webhook payload, removing
+    the need for a GraphQL round-trip to resolve a ``content_node_id``.
 
     Returns a dict summarising the action taken.
     """
     devin = devin or DevinClient()
-    github = github or GitHubClient()
-
-    # Resolve the issue from the content node ID
-    issue_data = await github.resolve_issue_from_node_id(content_node_id)
-    if issue_data is None:
-        logger.warning("Could not resolve node %s to an issue", content_node_id)
-        return {"action": "skipped", "reason": "unresolvable_node_id"}
-
-    issue_number: int = issue_data["number"]
-    issue_title: str = issue_data.get("title", "")
-    issue_body: str = issue_data.get("body", "")
-    issue_url: str = issue_data.get("url", "")
 
     # Ensure we have a local record
     existing = await db.get_issue(issue_number)
     old_status = existing["status"] if existing else "backlog"
 
-    # Normalise status names (GitHub Project fields are user-defined)
+    # Normalise status names
     new_status_lower = new_status.lower().strip()
 
     if not is_valid_transition(old_status, new_status_lower):
@@ -93,12 +90,10 @@ async def handle_status_change(
 
     # Upsert base fields
     update_fields: dict[str, Any] = {
-        "issue_node_id": content_node_id,
+        "issue_node_id": issue_node_id,
         "title": issue_title,
         "status": new_status_lower,
     }
-    if project_item_id is not None:
-        update_fields["project_item_id"] = project_item_id
 
     # Handle each transition
     if new_status_lower == "planning":

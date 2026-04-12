@@ -1,4 +1,9 @@
-"""Tests for the webhook endpoint — HMAC verification, payload parsing, event routing."""
+"""Tests for the webhook endpoint — HMAC verification, payload parsing, event routing.
+
+The orchestrator uses ``issues`` webhook events with ``state:*`` labels
+as the primary trigger (since ``projects_v2_item`` events are not
+available on repo-level webhooks for user-owned repos).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from app.config import settings
 from app.github_client import verify_signature
 from app.main import app
+from app.webhook import _extract_status_from_label
 
 
 def _sign(payload: bytes, secret: str) -> str:
@@ -29,23 +35,54 @@ def webhook_secret():
 
 
 @pytest.fixture
-def sample_payload():
+def labeled_payload():
+    """Simulate an ``issues`` webhook with a ``state:planning`` label added."""
     return {
-        "action": "edited",
-        "changes": {
-            "field_value": {
-                "field_node_id": "PVTSSF_test",
-                "field_type": "single_select",
-                "to": {"name": "Planning"},
-            }
-        },
-        "projects_v2_item": {
-            "id": 12345,
-            "node_id": "PVTI_test",
-            "content_node_id": "I_test_node",
-            "content_type": "Issue",
+        "action": "labeled",
+        "label": {"id": 1, "name": "state:planning", "color": "ededed"},
+        "issue": {
+            "number": 1,
+            "title": "Session cookies not invalidated on logout",
+            "body": "After logout, stolen cookies still grant access.",
+            "html_url": "https://github.com/victorlga/superset/issues/1",
+            "node_id": "I_test_node_1",
+            "labels": [
+                {"name": "remediation-target"},
+                {"name": "state:planning"},
+            ],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Label extraction unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractStatusFromLabel:
+    def test_planning(self):
+        assert _extract_status_from_label("state:planning") == "planning"
+
+    def test_building(self):
+        assert _extract_status_from_label("state:building") == "building"
+
+    def test_reviewing(self):
+        assert _extract_status_from_label("state:reviewing") == "reviewing"
+
+    def test_done(self):
+        assert _extract_status_from_label("state:done") == "done"
+
+    def test_case_insensitive(self):
+        assert _extract_status_from_label("State:Planning") == "planning"
+
+    def test_non_state_label_returns_none(self):
+        assert _extract_status_from_label("remediation-target") is None
+
+    def test_unknown_state_returns_none(self):
+        assert _extract_status_from_label("state:unknown") is None
+
+    def test_empty_string_returns_none(self):
+        assert _extract_status_from_label("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +137,7 @@ class TestWebhookEndpoint:
         assert resp.json()["status"] == "pong"
 
     async def test_rejects_invalid_signature(self, webhook_secret):
-        body = b'{"action": "edited"}'
+        body = b'{"action": "labeled"}'
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -108,55 +145,16 @@ class TestWebhookEndpoint:
                 "/webhooks/github",
                 content=body,
                 headers={
-                    "X-GitHub-Event": "projects_v2_item",
+                    "X-GitHub-Event": "issues",
                     "X-Hub-Signature-256": "sha256=invalid",
                     "Content-Type": "application/json",
                 },
             )
         assert resp.status_code == 401
 
-    async def test_ignores_non_edited_action(self, webhook_secret, sample_payload):
-        sample_payload["action"] = "created"
-        body = json.dumps(sample_payload).encode()
-        sig = _sign(body, webhook_secret)
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            resp = await client.post(
-                "/webhooks/github",
-                content=body,
-                headers={
-                    "X-GitHub-Event": "projects_v2_item",
-                    "X-Hub-Signature-256": sig,
-                    "Content-Type": "application/json",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "action_not_edited"
-
-    async def test_ignores_non_issue_content(self, webhook_secret, sample_payload):
-        sample_payload["projects_v2_item"]["content_type"] = "PullRequest"
-        body = json.dumps(sample_payload).encode()
-        sig = _sign(body, webhook_secret)
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            resp = await client.post(
-                "/webhooks/github",
-                content=body,
-                headers={
-                    "X-GitHub-Event": "projects_v2_item",
-                    "X-Hub-Signature-256": sig,
-                    "Content-Type": "application/json",
-                },
-            )
-        assert resp.status_code == 200
-        assert resp.json()["reason"] == "not_an_issue"
-
-    async def test_ignores_unhandled_event_type(self, webhook_secret):
-        body = b'{"action": "opened"}'
+    async def test_ignores_non_labeled_action(self, webhook_secret, labeled_payload):
+        labeled_payload["action"] = "opened"
+        body = json.dumps(labeled_payload).encode()
         sig = _sign(body, webhook_secret)
 
         async with AsyncClient(
@@ -172,7 +170,71 @@ class TestWebhookEndpoint:
                 },
             )
         assert resp.status_code == 200
+        assert resp.json()["reason"] == "action_not_labeled"
+
+    async def test_ignores_non_state_label(self, webhook_secret, labeled_payload):
+        labeled_payload["label"]["name"] = "bug"
+        body = json.dumps(labeled_payload).encode()
+        sig = _sign(body, webhook_secret)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/webhooks/github",
+                content=body,
+                headers={
+                    "X-GitHub-Event": "issues",
+                    "X-Hub-Signature-256": sig,
+                    "Content-Type": "application/json",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["reason"] == "not_a_state_label"
+
+    async def test_ignores_unhandled_event_type(self, webhook_secret):
+        body = b'{"ref": "refs/heads/main"}'
+        sig = _sign(body, webhook_secret)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/webhooks/github",
+                content=body,
+                headers={
+                    "X-GitHub-Event": "push",
+                    "X-Hub-Signature-256": sig,
+                    "Content-Type": "application/json",
+                },
+            )
+        assert resp.status_code == 200
         assert resp.json()["status"] == "ignored"
+
+    async def test_processes_valid_state_label(self, webhook_secret, labeled_payload):
+        """A valid ``state:planning`` label on issue #1 should be processed."""
+        body = json.dumps(labeled_payload).encode()
+        sig = _sign(body, webhook_secret)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/webhooks/github",
+                content=body,
+                headers={
+                    "X-GitHub-Event": "issues",
+                    "X-Hub-Signature-256": sig,
+                    "Content-Type": "application/json",
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "processed"
+        # The state machine will try to create a Devin session which will
+        # fail (no real API key), so expect an error action — but the
+        # webhook itself should still return 200.
+        assert data.get("issue_number") == 1
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,10 @@
-"""GitHub webhook endpoint for projects_v2_item events."""
+"""GitHub webhook endpoint for issue label events.
+
+Since ``projects_v2_item`` webhooks are not supported on repository-level
+webhooks for user-owned repos, the orchestrator uses **issue label
+transitions** as the primary state-machine driver.  A ``state:<status>``
+label added to an issue triggers the corresponding pipeline transition.
+"""
 
 from __future__ import annotations
 
@@ -14,23 +20,24 @@ from app.state_machine import handle_status_change
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Maps commonly-used project board column names to internal status values.
-STATUS_MAP: dict[str, str] = {
-    "backlog": "backlog",
+# Label prefix used to encode pipeline status on GitHub issues.
+STATE_LABEL_PREFIX = "state:"
+
+# Maps state label suffixes to internal status values.
+LABEL_STATUS_MAP: dict[str, str] = {
     "planning": "planning",
     "building": "building",
     "reviewing": "reviewing",
     "done": "done",
-    # Allow some flexibility
-    "in progress": "building",
-    "review": "reviewing",
-    "todo": "backlog",
 }
 
 
-def _normalise_status(raw: str) -> str:
-    """Map a human-readable project board column name to an internal status."""
-    return STATUS_MAP.get(raw.lower().strip(), raw.lower().strip())
+def _extract_status_from_label(label_name: str) -> str | None:
+    """Return the internal status if *label_name* is a state label, else ``None``."""
+    if not label_name.lower().startswith(STATE_LABEL_PREFIX):
+        return None
+    suffix = label_name[len(STATE_LABEL_PREFIX):].lower().strip()
+    return LABEL_STATUS_MAP.get(suffix)
 
 
 @router.post("/webhooks/github")
@@ -54,13 +61,13 @@ async def github_webhook(
     payload = await request.json()
 
     # 2. Route by event type
-    if x_github_event == "projects_v2_item":
-        return await _handle_project_item(payload)
+    if x_github_event == "issues":
+        return await _handle_issues_event(payload)
 
     if x_github_event == "ping":
         return Response(content='{"status": "pong"}', status_code=200, media_type="application/json")
 
-    # Unhandled event type — acknowledge but do nothing
+    # Unhandled event type -- acknowledge but do nothing
     logger.debug("Ignoring event type: %s", x_github_event)
     return Response(
         content='{"status": "ignored"}',
@@ -69,75 +76,58 @@ async def github_webhook(
     )
 
 
-async def _handle_project_item(payload: dict) -> Response:
-    """Handle a projects_v2_item webhook event."""
+async def _handle_issues_event(payload: dict) -> Response:
+    """Handle an ``issues`` webhook event.
+
+    We only care about the ``labeled`` action where a ``state:*`` label is
+    applied, which signals a pipeline status transition.
+    """
     action = payload.get("action")
-    if action != "edited":
+    if action != "labeled":
         return Response(
-            content='{"status": "ignored", "reason": "action_not_edited"}',
+            content=json.dumps({"status": "ignored", "reason": "action_not_labeled"}),
             status_code=200,
             media_type="application/json",
         )
 
-    changes = payload.get("changes", {})
-    field_value = changes.get("field_value")
-    if not field_value:
+    label = payload.get("label", {})
+    label_name: str = label.get("name", "")
+    new_status = _extract_status_from_label(label_name)
+
+    if new_status is None:
+        logger.debug("Ignoring non-state label: %s", label_name)
         return Response(
-            content='{"status": "ignored", "reason": "no_field_value_change"}',
+            content=json.dumps({"status": "ignored", "reason": "not_a_state_label"}),
             status_code=200,
             media_type="application/json",
         )
 
-    item = payload.get("projects_v2_item", {})
-    content_node_id: str = item.get("content_node_id", "")
-    content_type: str = item.get("content_type", "")
-    project_item_id: int | None = item.get("id")
-
-    if content_type != "Issue":
+    issue = payload.get("issue", {})
+    issue_number: int | None = issue.get("number")
+    if not issue_number:
         return Response(
-            content='{"status": "ignored", "reason": "not_an_issue"}',
+            content=json.dumps({"status": "ignored", "reason": "missing_issue_number"}),
             status_code=200,
             media_type="application/json",
         )
 
-    if not content_node_id:
-        return Response(
-            content='{"status": "ignored", "reason": "missing_content_node_id"}',
-            status_code=200,
-            media_type="application/json",
-        )
+    issue_title: str = issue.get("title", "")
+    issue_body: str = issue.get("body", "") or ""
+    issue_url: str = issue.get("html_url", "")
+    issue_node_id: str = issue.get("node_id", "")
 
-    # Read the new status from the field value.
-    # The payload includes `to` with the option details for single_select fields.
-    to_value = field_value.get("to", {})
-    new_status_raw = ""
-    if isinstance(to_value, dict):
-        new_status_raw = to_value.get("name", "")
-    elif isinstance(to_value, str):
-        new_status_raw = to_value
-
-    if not new_status_raw:
-        # Try reading from the `field_value` directly
-        new_status_raw = field_value.get("value", "")
-
-    if not new_status_raw:
-        logger.info("Could not determine new status from payload")
-        return Response(
-            content='{"status": "ignored", "reason": "unknown_new_status"}',
-            status_code=200,
-            media_type="application/json",
-        )
-
-    new_status = _normalise_status(new_status_raw)
     logger.info(
-        "Project item %s (%s) status changed to: %s (raw: %s)",
-        project_item_id, content_node_id, new_status, new_status_raw,
+        "Issue #%d labeled '%s' -> status '%s'",
+        issue_number, label_name, new_status,
     )
 
     result = await handle_status_change(
-        content_node_id=content_node_id,
+        issue_number=issue_number,
         new_status=new_status,
-        project_item_id=project_item_id,
+        issue_title=issue_title,
+        issue_body=issue_body,
+        issue_url=issue_url,
+        issue_node_id=issue_node_id,
     )
 
     return Response(
