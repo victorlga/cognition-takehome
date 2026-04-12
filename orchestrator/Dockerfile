@@ -2,12 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-# Copy application code
+# Copy all source and install
 COPY . .
+RUN pip install --no-cache-dir .
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data

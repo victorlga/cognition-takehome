@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Header, Request, Response
@@ -139,7 +140,6 @@ async def _handle_project_item(payload: dict) -> Response:
         project_item_id=project_item_id,
     )
 
-    import json
     return Response(
         content=json.dumps({"status": "processed", **result}),
         status_code=200,

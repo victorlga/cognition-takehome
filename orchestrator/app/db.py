@@ -94,7 +94,8 @@ async def _connect() -> AsyncIterator[aiosqlite.Connection]:
         await db.close()
 
 
-def _now() -> str:
+def now_utc() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -113,7 +114,7 @@ async def get_issue(issue_id: int) -> dict[str, Any] | None:
 
 async def upsert_issue(issue_id: int, **kwargs: Any) -> None:
     existing = await get_issue(issue_id)
-    now = _now()
+    now = now_utc()
     if existing is None:
         cols = ["issue_id", "created_at", "updated_at"]
         vals: list[Any] = [issue_id, now, now]
@@ -157,7 +158,7 @@ async def insert_session_log(
     session_type: str,
     status: str = "running",
 ) -> int:
-    now = _now()
+    now = now_utc()
     async with _connect() as db:
         cursor = await db.execute(
             "INSERT INTO session_log (issue_id, session_id, session_type, status, started_at) "
@@ -173,7 +174,7 @@ async def update_session_log(
     status: str,
     duration_seconds: int | None = None,
 ) -> None:
-    now = _now()
+    now = now_utc()
     async with _connect() as db:
         await db.execute(
             "UPDATE session_log SET status = ?, finished_at = ?, duration_seconds = ? "

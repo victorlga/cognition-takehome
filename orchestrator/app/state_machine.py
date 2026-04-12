@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app import db
+from app.db import now_utc
 from app.devin_client import DevinClient
 from app.github_client import GitHubClient
 from app.prompts import IssueContext, build_builder_prompt, build_planner_prompt, build_reviewer_prompt
@@ -101,7 +102,7 @@ async def handle_status_change(
 
     # Handle each transition
     if new_status_lower == "planning":
-        update_fields["planning_started_at"] = db._now()
+        update_fields["planning_started_at"] = now_utc()
         prompt = build_planner_prompt(ctx)
         try:
             session = await devin.create_session(
@@ -120,7 +121,7 @@ async def handle_status_change(
             result["action"] = "error"
 
     elif new_status_lower == "building":
-        update_fields["building_started_at"] = db._now()
+        update_fields["building_started_at"] = now_utc()
         # Retrieve plan text from existing record or issue comments
         plan_text = (existing or {}).get("plan_text", "")
         if not plan_text:
@@ -143,7 +144,7 @@ async def handle_status_change(
             result["action"] = "error"
 
     elif new_status_lower == "reviewing":
-        update_fields["reviewing_started_at"] = db._now()
+        update_fields["reviewing_started_at"] = now_utc()
         pr_url = (existing or {}).get("pr_url", "")
         if not pr_url:
             pr_url = "(PR URL not cached — check the issue comments.)"
@@ -165,7 +166,7 @@ async def handle_status_change(
             result["action"] = "error"
 
     elif new_status_lower == "done":
-        update_fields["done_at"] = db._now()
+        update_fields["done_at"] = now_utc()
         logger.info("Issue #%d marked as done", issue_number)
 
     elif new_status_lower == "error":
