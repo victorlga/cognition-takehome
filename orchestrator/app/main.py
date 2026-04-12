@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db import init_db
 from app.poller import start_polling_loop
-from app.webhook import router as webhook_router
 from app.dashboard import router as dashboard_router
 
 logging.basicConfig(
@@ -64,7 +63,6 @@ app.add_middleware(
 )
 
 # Routers
-app.include_router(webhook_router)
 app.include_router(dashboard_router)
 
 

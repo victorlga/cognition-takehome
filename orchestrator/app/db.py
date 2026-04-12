@@ -42,7 +42,6 @@ SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS issue_state (
     issue_id            INTEGER PRIMARY KEY,
     issue_node_id       TEXT    NOT NULL,
-    project_item_id     INTEGER,
     title               TEXT,
     category            TEXT    NOT NULL DEFAULT 'security',
     status              TEXT    NOT NULL DEFAULT 'backlog',

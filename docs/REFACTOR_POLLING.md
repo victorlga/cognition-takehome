@@ -4,7 +4,7 @@
 The current system requires GitHub webhooks to push events to the orchestrator, which means the server must be publicly reachable. A recruiter running `docker compose up` locally can't receive webhooks without a tunnel or deployment.
 
 ## Solution
-Replace the **webhook-driven** primary trigger with a **polling-based** trigger. The orchestrator periodically polls the GitHub API for `state:*` label changes on issues, eliminating the need for inbound connectivity. The webhook endpoint is preserved as an optional secondary trigger.
+Replace the **webhook-driven** primary trigger with a **polling-based** trigger. The orchestrator periodically polls the GitHub API for `state:*` label changes on issues, eliminating the need for inbound connectivity. The webhook endpoint has been fully removed (no legacy code retained).
 
 ---
 
@@ -91,11 +91,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         poll_task.cancel()
 ```
 
-### 5. `orchestrator/app/webhook.py` — No functional changes
+### 5. `orchestrator/app/webhook.py` — DELETED
 
-Preserved as-is. Still works as a secondary/optional trigger. The webhook and poller can coexist safely because `handle_status_change()` already validates transitions against the DB state — a duplicate trigger is a no-op (invalid transition "planning→planning" is rejected).
+Fully removed. The webhook endpoint, HMAC verification, and all related code have been deleted. Polling is the sole trigger mechanism.
 
-### 6. `orchestrator/app/state_machine.py` — No changes
+### 6. `orchestrator/app/state_machine.py` — Docstring updated
 
 Already receives issue data directly (not from webhook payloads). Both the webhook handler and the poller call the same `handle_status_change()` function.
 
@@ -143,18 +143,23 @@ The system is naturally idempotent because:
 1. `handle_status_change()` checks DB state before acting
 2. If `old_status == new_status`, the transition is invalid and rejected
 3. The poller only triggers when the label-based state **differs** from the DB state
-4. The webhook and poller can coexist — duplicate triggers are harmless no-ops
-
 ## Files NOT Changed
 
 | File | Why |
 |------|-----|
-| `state_machine.py` | Already accepts data directly — both triggers use the same entry point |
+| `state_machine.py` | Already accepts data directly — poller uses the same entry point |
 | `devin_client.py` | No changes needed — session creation API is unchanged |
 | `prompts.py` | Template logic is trigger-agnostic |
 | `scanner.py` | Stub — unrelated to trigger mechanism |
 | `dashboard.py` | Reads from DB — trigger-agnostic |
 | `db.py` | Existing queries are sufficient |
+
+## Files DELETED
+
+| File | Why |
+|------|-----|
+| `webhook.py` | Webhook endpoint fully removed — polling is the sole trigger |
+| `tests/test_webhook.py` | Tests for deleted webhook code |
 
 ## Summary of New/Modified Symbols
 

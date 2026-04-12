@@ -1,7 +1,7 @@
 """Tests for the state machine — transitions, validation, DB updates.
 
-The state machine now receives issue data directly from the webhook
-payload (label-based trigger) instead of resolving via GraphQL.
+The state machine receives issue data directly from the poller
+(label-based trigger) instead of resolving via GraphQL.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 from app import db
 from app.state_machine import handle_status_change, is_valid_transition
 
-# Shared issue kwargs used across tests — mirrors a real webhook payload.
+# Shared issue kwargs used across tests — mirrors a real poller trigger.
 _ISSUE_KWARGS = {
     "issue_title": "Test Issue",
     "issue_body": "Fix this bug",
