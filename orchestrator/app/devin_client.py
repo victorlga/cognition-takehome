@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 # Terminal statuses indicate the session is no longer active.
 TERMINAL_STATUSES = frozenset({"exit", "error", "suspended"})
 
-# status_detail values that indicate successful task completion.
-# For an automated orchestrator, only "finished" counts as settled —
-# "waiting_for_user" and "waiting_for_approval" mean the session is stuck.
-SETTLED_DETAIL = frozenset({"finished"})
+# status_detail values that indicate the session has done its work.
+# "finished" means task complete; "waiting_for_user" means Devin finished
+# and is idle — in an automated pipeline neither will get a human reply,
+# so both count as settled.
+SETTLED_DETAIL = frozenset({"finished", "waiting_for_user"})
 
 
 class DevinClient:
