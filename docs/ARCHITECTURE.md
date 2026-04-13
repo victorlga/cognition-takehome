@@ -273,7 +273,7 @@ The dashboard (served at `/dashboard` by the FastAPI app) answers the VP-of-Engi
 
 ### Metrics — What a VP of Engineering Wants to See
 
-Focused on three questions (per TAKEHOME.md Section 3):
+Focused on three questions:
 
 **Task Status ("What is active and what is done?")**
 - **Issues Remediated** — count of issues at `done` vs. total. The headline throughput metric.
@@ -310,8 +310,6 @@ All secrets are provided via environment variables. **Never hardcode.**
 | `POLLING_ENABLED` | Enable/disable the background poller (default: true) | Set in `.env` or `docker-compose.yml` | Poller background task |
 | `MAX_REBUILD_ATTEMPTS` | Maximum rebuild attempts before giving up (default: 3) | Set in `.env` or `docker-compose.yml` | State machine rebuild logic |
 
-> **Note:** The legacy "API Keys" page on Devin is deprecated. Use **Service Users** instead. A service user named `takehome` with Admin access has already been created for this project.
-
 ---
 
 ## Directory Structure (Target)
@@ -319,7 +317,7 @@ All secrets are provided via environment variables. **Never hardcode.**
 ```
 cognition-takehome/
 ├── docs/
-│   ├── TAKEHOME.md
+│   ├── image.png
 │   └── ARCHITECTURE.md
 ├── orchestrator/
 │   ├── Dockerfile
